@@ -2,7 +2,8 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Upload as TusUpload } from "tus-js-client";
+// The upload library itself is downloaded only when a report has files.
+import type { Upload as TusUpload } from "tus-js-client";
 import { createClient } from "@/lib/supabase/client";
 import { useConfirm } from "@/components/ui/confirm-provider";
 import { DoneBurst } from "@/components/ui/done-burst";
@@ -123,6 +124,7 @@ export function FeedbackForm({ userId, teamId, recent }: { userId: string; teamI
     }
     setFileProblems(problems);
     if (next.length) {
+      void import("tus-js-client").catch(() => {}); // ready by the time Send is pressed
       setItems((prev) => [...prev, ...next]);
       if (phase === "failed") setPhase("edit");
     }
@@ -153,10 +155,12 @@ export function FeedbackForm({ userId, teamId, recent }: { userId: string; teamI
     setPhase("edit");
   }
 
-  function uploadOne(it: Item, token: string): Promise<string> {
+  async function uploadOne(it: Item, token: string): Promise<string> {
+    const { Upload } = await import("tus-js-client");
+    if (cancelled.current) throw new Error("cancelled");
     const path = `${userId}/${uid()}-${safeFileName(it.file.name)}`;
     return new Promise((resolve, reject) => {
-      const tus = new TusUpload(it.file, {
+      const tus = new Upload(it.file, {
         endpoint: `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/upload/resumable`,
         retryDelays: [0, 1500, 4000, 8000],
         headers: { authorization: `Bearer ${token}`, "x-upsert": "false" },

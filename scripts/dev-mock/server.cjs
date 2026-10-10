@@ -160,6 +160,22 @@ function answer(req, res, url, body) {
       return send(res, 404, { error: "not found" });
     }
     const rpc = /^\/rest\/v1\/rpc\/([a-z0-9_]+)$/.exec(url.pathname);
+    // The daily word's one-step guess (0079), on the remembered plays.
+    if (rpc && rpc[1] === "daily_word_guess") {
+      const b = body ? JSON.parse(body) : {};
+      const rows = tableRows(F, "daily_word_plays");
+      const now = new Date().toISOString();
+      let row = rows.find((r) => r.user_id === b.p_user && r.day === b.p_day);
+      if (!row) rows.push((row = { user_id: b.p_user, day: b.p_day, puzzle: b.p_puzzle, guesses: [], solved: false, finished_at: null, created_at: now, updated_at: now }));
+      if (row.finished_at) return send(res, 200, [{ result: "over", guesses: row.guesses, solved: row.solved, finished: true }]);
+      if (row.guesses.includes(b.p_word)) return send(res, 200, [{ result: "again", guesses: row.guesses, solved: row.solved, finished: false }]);
+      row.guesses = [...row.guesses, b.p_word];
+      row.solved = !!b.p_solved;
+      const done = row.solved || row.guesses.length >= 6;
+      row.finished_at = done ? now : null;
+      row.updated_at = now;
+      return send(res, 200, [{ result: "ok", guesses: row.guesses, solved: row.solved, finished: done }]);
+    }
     if (rpc) {
       const v = F.rpc?.[rpc[1]];
       const out = typeof v === "function" ? v(body ? JSON.parse(body) : {}) : v ?? null;

@@ -34,6 +34,10 @@ export const PALETTES = [
   { id: "mocha", name: "Mocha", note: "Latte, coffee brown", light: { paper: "238 233 228", surface: "255 254 252", accent: "120 82 52" }, dark: { paper: "19 15 12", surface: "32 26 21", accent: "166 118 78" } },
   { id: "slate", name: "Slate", note: "Cool grey, graphite", light: { paper: "232 234 238", surface: "255 255 255", accent: "51 65 85" }, dark: { paper: "13 15 19", surface: "24 27 33", accent: "100 116 139" } },
   { id: "ink", name: "Ink", note: "Plain grey, black ink", light: { paper: "236 236 236", surface: "255 255 255", accent: "28 28 30" }, dark: { paper: "12 12 13", surface: "24 24 26", accent: "120 120 128" } },
+  { id: "inkorange", name: "Ink Orange", note: "Ink's greys, orange buttons", light: { paper: "236 236 236", surface: "255 255 255", accent: "232 99 13" }, dark: { paper: "12 12 13", surface: "24 24 26", accent: "232 99 13" } },
+  { id: "inkgrape", name: "Ink Grape", note: "Ink's greys, grape buttons", light: { paper: "236 236 236", surface: "255 255 255", accent: "109 64 214" }, dark: { paper: "12 12 13", surface: "24 24 26", accent: "139 102 240" } },
+  { id: "inkorchid", name: "Ink Orchid", note: "Ink's greys, orchid buttons", light: { paper: "236 236 236", surface: "255 255 255", accent: "162 28 175" }, dark: { paper: "12 12 13", surface: "24 24 26", accent: "192 72 206" } },
+  { id: "inkcherry", name: "Ink Cherry", note: "Ink's greys, cherry buttons", light: { paper: "236 236 236", surface: "255 255 255", accent: "200 30 48" }, dark: { paper: "12 12 13", surface: "24 24 26", accent: "229 62 74" } },
 ] as const;
 export type PaletteId = (typeof PALETTES)[number]["id"];
 export const isPalette = (v: unknown): v is PaletteId => typeof v === "string" && PALETTES.some((p) => p.id === v);

@@ -30,7 +30,8 @@ import { LongSettingsForm } from "./long-settings";
 import { ScriptSettingsForm } from "./script-settings";
 import { DEFAULT_LONG_COLOR, DEFAULT_SHORT_COLOR } from "@/lib/kind-colors";
 import { Suspense } from "react";
-import { ConnectedAccounts } from "./connected-accounts";
+// Each tab's heavy parts load only on that tab (the page shows one tab at a time).
+import { ConnectedAccounts, ObjectivesSettings } from "./lazy-tabs";
 import { FACEBOOK_POST_SCOPE, PROVIDERS, YOUTUBE_EDIT_SCOPE, hasStatsScopes, statsEnabled, type SocialPlatform } from "@/lib/social/providers";
 import { getSocialSetup } from "@/lib/social/setup";
 import { socialKeyConfigured } from "@/lib/social/crypto";
@@ -41,7 +42,7 @@ import { TasksVisibilityForm } from "./tasks-visibility-form";
 import { WhatsNewButton } from "@/components/ui/whats-new";
 import { PendingNav, PendingSwap } from "@/components/ui/pending-nav";
 import { TEAM_TABS, TeamTabSkeleton, teamTab, type TeamTab } from "./skeletons";
-import { ObjectivesSettings } from "./objectives-settings";
+
 import { getObjectivesBoard } from "@/modules/objectives/lib/board";
 
 export default async function TeamPage({ searchParams }: { searchParams: Promise<{ tab?: string; edit?: string }> }) {

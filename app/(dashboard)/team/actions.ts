@@ -655,7 +655,7 @@ export async function chooseFacebookPage(teamId: string, pageId: string) {
   if (!access.user) return { error: "Your session expired. Sign in again." };
   if (!access.ok) return { error: "Only the master or a scheduler can change this." };
   const admin = createAdminClient();
-  const { data: row } = await admin.from("social_accounts").select("id, refresh_token_enc").eq("team_id", teamId).eq("platform", "facebook").maybeSingle();
+  const { data: row } = await admin.from("social_accounts").select("id, refresh_token_enc, external_id").eq("team_id", teamId).eq("platform", "facebook").maybeSingle();
   if (!row?.refresh_token_enc) return { error: "Connect Facebook again to pick a Page." };
   let page;
   try {
@@ -672,12 +672,10 @@ export async function chooseFacebookPage(teamId: string, pageId: string) {
     .update({ access_token_enc: encryptToken(page.token), external_id: page.id, display_name: page.name, username: null, avatar_url: page.picture, status: "active", last_error: null })
     .eq("id", row.id);
   if (error) return { error: error.code === "23505" ? `That Page is already connected to another ${APP_NAME} team. Disconnect it there first.` : "Couldn't switch the Page. Try again." };
-  // The old Page's numbers no longer belong here: the next sync starts fresh (90 days).
-  await Promise.all([
-    admin.from("analytics_daily").delete().eq("team_id", teamId).eq("platform", "facebook"),
-    admin.from("analytics_content").delete().eq("team_id", teamId).eq("platform", "facebook"),
-    admin.from("analytics_syncs").delete().eq("team_id", teamId).eq("platform", "facebook"),
-  ]);
+  // Another Page: the old one's numbers (every table) no longer belong here,
+  // and the next sync starts fresh (90 days). The same Page: nothing changes.
+  const { adoptAccount } = await import("@/modules/analytics/lib/accounts");
+  await adoptAccount(admin, teamId, "facebook", { externalId: page.id, name: page.name }, (row.external_id as string | null) ?? null);
   await logSocial(teamId, "facebook", "reconnected", access.user.id, { account: page.name });
   revalidatePath("/team");
   revalidatePath("/analytics");

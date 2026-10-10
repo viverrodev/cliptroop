@@ -4,7 +4,7 @@
 import { addDays, daysLeft, dayInZone, elapsed, isPeriodStart, localNow, periodDays, periodEnd, periodLabel, periodPhrase, periodRange, periodStart, periodTick, recentPeriods, shiftPeriod, timeLeft, upcomingPeriods } from "../modules/objectives/lib/periods";
 import { cleanFilters, describe, formatAmount, nextColor, suggestTitle, unitFor, draftProblem } from "../modules/objectives/lib/metrics";
 import { hitsFor } from "../modules/objectives/lib/hits";
-import { contributorsOf, paceFor, periodResult, streakOf } from "../modules/objectives/lib/compute";
+import { contributorsOf, firstCounted, paceFor, periodResult, statsOf, streakOf } from "../modules/objectives/lib/compute";
 import type { Sources, ShortSrc, LongSrc, DailyRow } from "../modules/objectives/lib/types";
 
 let fails = 0;
@@ -192,6 +192,16 @@ eq(streakOf([R(5, 1), R(5, 5)]), 1, "just this one");
 eq(streakOf([]), 0, "nothing yet");
 const who = contributorsOf(posted);
 ok(who[0].memberId === M.ana && who[0].count === 2 && who.find((c) => c.memberId === M.radu)?.roles.includes("edit") === true, "who helped: Ana wrote both, Radu edited");
+
+// ---- Periods before a goal was set (1.15.0): shown, never judged ---------------
+eq(firstCounted("quarter", "2026-10-08", "2026-10-01"), "2026-10-01", "a goal set Oct 8 counts the whole quarter it was set in");
+eq(firstCounted("week", "2026-10-07", "2026-10-05"), "2026-10-05", "set on a Wednesday: that week counts");
+eq(firstCounted("month", "2026-11-02", "2026-10-01"), "2026-10-01", "a creation date in the future never hides the current period");
+const S = (target: number, value: number) => ({ target, value, reached: target > 0 && value >= target });
+eq(statsOf([S(12, 3)]), { streak: 0, best: 3, reached: 0, counted: 0, average: null }, "a brand new goal: nothing missed, no average yet");
+eq(statsOf([S(12, 12)]), { streak: 1, best: 12, reached: 1, counted: 1, average: null }, "a brand new goal reached already");
+eq(statsOf([S(5, 6), S(5, 2), S(5, 5), S(5, 1)]), { streak: 1, best: 6, reached: 2, counted: 3, average: 4.3 }, "since it was set: 2 of 3 finished reached, the running one not yet");
+eq(statsOf([]), { streak: 0, best: 0, reached: 0, counted: 0, average: null }, "no periods");
 
 console.log(fails ? `${fails} FAILED` : "ALL PASSED");
 process.exit(fails ? 1 : 0);

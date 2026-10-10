@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getAccessToken } from "@/lib/social/tokens";
 import { FB_GRAPH, hasStatsScopes, STATS_SCOPES, type SocialPlatform } from "@/lib/social/providers";
 import { facebookEarnings } from "./fb-money";
+import { adoptAccount, sameAccount } from "./accounts";
 import { syncObjectives } from "@/modules/objectives/lib/sync";
 
 /*
@@ -15,7 +16,7 @@ import { syncObjectives } from "@/modules/objectives/lib/sync";
  */
 
 type Admin = ReturnType<typeof createAdminClient>;
-type Account = { id: string; team_id: string; platform: SocialPlatform; external_id: string | null; scopes: string[] | null };
+type Account = { id: string; team_id: string; platform: SocialPlatform; external_id: string | null; scopes: string[] | null; username?: string | null; display_name?: string | null };
 export type SyncResult = { platform: SocialPlatform; ok: boolean; error?: string; rows: number; note?: string | null };
 
 const DAY = 86_400_000;
@@ -112,6 +113,25 @@ async function syncYouTube(admin: Admin, acc: Account, backfill: boolean, links:
       followers_lost: num(r.subscribersLost),
     });
 
+  // More per day (migration 0079): engaged views, average % viewed, dislikes,
+  // playlist adds. Optional: a channel or an API version without one of
+  // them still gets the rest (the shorter list), and the totals above never
+  // depend on it.
+  for (const metrics of ["engagedViews,averageViewPercentage,dislikes,videosAddedToPlaylists", "averageViewPercentage,dislikes"]) {
+    try {
+      const extra = rowsOf(await ytReport(token, { startDate: start, endDate: end, metrics, dimensions: "day", sort: "day" }));
+      for (const r of extra)
+        put(String(r.day), "all", {
+          ...(metrics.includes("engagedViews") ? { engaged_views: num(r.engagedViews), playlist_adds: num(r.videosAddedToPlaylists) } : {}),
+          avg_view_pct: num(r.averageViewPercentage),
+          dislikes: num(r.dislikes),
+        });
+      break;
+    } catch {
+      /* try the shorter list, then go without */
+    }
+  }
+
   // Shorts vs long videos (creatorContentType). Optional: skipped if YouTube refuses it.
   try {
     const split = rowsOf(
@@ -152,7 +172,14 @@ async function syncYouTube(admin: Admin, acc: Account, backfill: boolean, links:
     if (uploads) rows += await syncYouTubeVideos(admin, acc, token, uploads, links);
   } catch {}
 
-  rows += await upsert(admin, "analytics_daily", [...daily.values()], "team_id,platform,day,content");
+  rows += await upsertSome(admin, "analytics_daily", [...daily.values()], "team_id,platform,day,content", NEW_DAILY_COLS);
+
+  // Each video's views per day (the top 50 of each day), for "what got the
+  // views that day" on the chart: the last 4 days (YouTube keeps updating
+  // them), 28 on the first copy.
+  try {
+    rows += await syncYouTubeVideoDays(admin, acc, token, dayRange(daysAgo(backfill ? 28 : 4), daysAgo(1)).reverse(), links);
+  } catch {}
 
   // Countries, one day at a time (the map; YouTube can't split days and
   // countries in one report). Every run refreshes the last 4 days and fills
@@ -248,35 +275,150 @@ async function syncYouTube(admin: Admin, acc: Account, backfill: boolean, links:
   return { rows, revenueNote, note: countryError ? `countries: ${countryError}` : null };
 }
 
+type YtVideo = { id: string; snippet?: { title?: string; publishedAt?: string; thumbnails?: Record<string, { url?: string }> }; statistics?: Record<string, string>; contentDetails?: { duration?: string } };
+
+/** Videos' titles, pictures and lifetime counts (Data API), at most 50 per call. */
+async function ytVideos(token: string, ids: string[]): Promise<YtVideo[]> {
+  const out: YtVideo[] = [];
+  for (let i = 0; i < ids.length; i += 50) {
+    const r = (await get(`${YT}/videos?${new URLSearchParams({ part: "snippet,statistics,contentDetails", id: ids.slice(i, i + 50).join(","), maxResults: "50" })}`, token)) as { items?: YtVideo[] };
+    out.push(...(r.items ?? []));
+  }
+  return out;
+}
+
+function ytContentRow(acc: Account, v: YtVideo, links: Links) {
+  const link = links.byExternal.get(`youtube:${v.id}`) ?? links.byUrl(v.id);
+  const secs = isoDuration(v.contentDetails?.duration);
+  return {
+    team_id: acc.team_id,
+    platform: "youtube",
+    external_id: v.id,
+    kind: link?.short ? "short" : link?.project ? "long" : secs !== null && secs <= 180 ? "short" : "long",
+    title: v.snippet?.title ?? null,
+    url: `https://www.youtube.com/watch?v=${v.id}`,
+    thumbnail_url: v.snippet?.thumbnails?.medium?.url ?? v.snippet?.thumbnails?.default?.url ?? null,
+    published_at: v.snippet?.publishedAt ?? null,
+    duration_seconds: secs,
+    views: num(v.statistics?.viewCount),
+    likes: num(v.statistics?.likeCount),
+    comments: num(v.statistics?.commentCount),
+    short_id: link?.short ?? null,
+    project_id: link?.project ?? null,
+    updated_at: new Date().toISOString(),
+  } as Record<string, unknown>;
+}
+
+/**
+ * Each video's lifetime analytics (YouTube Analytics API): engaged views,
+ * watch time, average view duration, average % viewed, subscribers gained.
+ * Null when YouTube won't give them (they're optional).
+ */
+async function ytVideoStats(token: string, ids: string[]): Promise<Map<string, Record<string, number | null>> | null> {
+  if (!ids.length) return new Map();
+  for (const metrics of ["views,engagedViews,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,subscribersGained", "views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,subscribersGained"]) {
+    try {
+      const out = new Map<string, Record<string, number | null>>();
+      for (let i = 0; i < ids.length; i += 50) {
+        const chunk = ids.slice(i, i + 50);
+        const list = rowsOf(await ytReport(token, { startDate: "2005-04-23", endDate: daysAgo(0), dimensions: "video", metrics, filters: `video==${chunk.join(",")}`, sort: "-views", maxResults: "50" }));
+        for (const r of list)
+          out.set(String(r.video), {
+            engaged_views: metrics.includes("engagedViews") ? num(r.engagedViews) : null,
+            watch_minutes: num(r.estimatedMinutesWatched),
+            avg_view_seconds: num(r.averageViewDuration),
+            avg_view_pct: num(r.averageViewPercentage),
+            subscribers_gained: num(r.subscribersGained),
+          });
+      }
+      return out;
+    } catch {
+      /* the shorter list, then without */
+    }
+  }
+  return null;
+}
+
 async function syncYouTubeVideos(admin: Admin, acc: Account, token: string, uploads: string, links: Links) {
   const items = (await get(`${YT}/playlistItems?${new URLSearchParams({ part: "contentDetails", playlistId: uploads, maxResults: "50" })}`, token)) as { items?: { contentDetails?: { videoId?: string } }[] };
   const ids = (items.items ?? []).map((i) => i.contentDetails?.videoId).filter((x): x is string => !!x);
   if (!ids.length) return 0;
-  const vids = (await get(`${YT}/videos?${new URLSearchParams({ part: "snippet,statistics,contentDetails", id: ids.join(","), maxResults: "50" })}`, token)) as {
-    items?: { id: string; snippet?: { title?: string; publishedAt?: string; thumbnails?: Record<string, { url?: string }> }; statistics?: Record<string, string>; contentDetails?: { duration?: string } }[];
-  };
-  const recs = (vids.items ?? []).map((v) => {
-    const link = links.byExternal.get(`youtube:${v.id}`) ?? links.byUrl(v.id);
-    const secs = isoDuration(v.contentDetails?.duration);
-    return {
-      team_id: acc.team_id,
-      platform: "youtube",
-      external_id: v.id,
-      kind: link?.short ? "short" : link?.project ? "long" : secs !== null && secs <= 180 ? "short" : "long",
-      title: v.snippet?.title ?? null,
-      url: `https://www.youtube.com/watch?v=${v.id}`,
-      thumbnail_url: v.snippet?.thumbnails?.medium?.url ?? v.snippet?.thumbnails?.default?.url ?? null,
-      published_at: v.snippet?.publishedAt ?? null,
-      duration_seconds: secs,
-      views: num(v.statistics?.viewCount),
-      likes: num(v.statistics?.likeCount),
-      comments: num(v.statistics?.commentCount),
-      short_id: link?.short ?? null,
-      project_id: link?.project ?? null,
-      updated_at: new Date().toISOString(),
-    };
+  const [vids, stats] = await Promise.all([ytVideos(token, ids), ytVideoStats(token, ids)]);
+  const recs = vids.map((v) => {
+    const row = ytContentRow(acc, v, links);
+    // Only when YouTube shared them this time (never blank yesterday's numbers).
+    if (stats) Object.assign(row, stats.get(v.id) ?? { engaged_views: null, watch_minutes: null, avg_view_seconds: null, avg_view_pct: null, subscribers_gained: null });
+    return row;
   });
-  return upsert(admin, "analytics_content", recs, "team_id,platform,external_id");
+  return upsertSome(admin, "analytics_content", recs, "team_id,platform,external_id", NEW_CONTENT_COLS);
+}
+
+/**
+ * The videos that got views on each of these days, with their views that
+ * day (YouTube's top 50 per day), into analytics_content_days. Videos that
+ * aren't listed yet (an older upload getting views again) are added with
+ * their titles and pictures.
+ */
+async function syncYouTubeVideoDays(admin: Admin, acc: Account, token: string, days: string[], links: Links) {
+  const now = new Date().toISOString();
+  const recs: Record<string, unknown>[] = [];
+  let failures = 0;
+  // A few days at a time (one report per day).
+  for (let i = 0; i < days.length && failures < 3; i += 4) {
+    const batch = await Promise.all(
+      days.slice(i, i + 4).map(async (day) => {
+        try {
+          return { day, list: rowsOf(await ytReport(token, { startDate: day, endDate: day, dimensions: "video", metrics: "views,estimatedMinutesWatched,likes,comments,shares", sort: "-views", maxResults: "50" })) };
+        } catch {
+          return { day, list: null };
+        }
+      })
+    );
+    for (const { day, list } of batch) {
+      if (!list) {
+        failures++;
+        continue;
+      }
+      failures = 0;
+      for (const r of list) {
+        const id = String(r.video ?? "");
+        if (!id || !(num(r.views) ?? 0)) continue;
+        recs.push({ team_id: acc.team_id, platform: "youtube", external_id: id, day, source: "daily", views: num(r.views), watch_minutes: num(r.estimatedMinutesWatched), likes: num(r.likes), comments: num(r.comments), shares: num(r.shares), updated_at: now });
+      }
+    }
+  }
+  if (!recs.length) return 0;
+  let rows = 0;
+  try {
+    rows += await upsert(admin, "analytics_content_days", recs, "team_id,platform,external_id,day");
+  } catch {
+    return 0; // Before migration 0079.
+  }
+  try {
+    const ids = [...new Set(recs.map((r) => r.external_id as string))];
+    const { data: known } = await admin.from("analytics_content").select("external_id").eq("team_id", acc.team_id).eq("platform", "youtube").in("external_id", ids);
+    const have = new Set(((known ?? []) as { external_id: string }[]).map((k) => k.external_id));
+    const missing = ids.filter((id) => !have.has(id)).slice(0, 100);
+    if (missing.length) rows += await upsert(admin, "analytics_content", (await ytVideos(token, missing)).map((v) => ytContentRow(acc, v, links)), "team_id,platform,external_id");
+  } catch {}
+  return rows;
+}
+
+/**
+ * One day's videos on demand (a day clicked on the chart that the daily copy
+ * didn't keep): YouTube only (the others only share totals, kept from each
+ * copy on). Returns false when there's no YouTube account to ask.
+ */
+export async function fetchYouTubeDay(teamId: string, day: string): Promise<boolean> {
+  const admin = createAdminClient();
+  const { data: acc } = await admin.from("social_accounts").select("id, team_id, platform, external_id, scopes, username, display_name").eq("team_id", teamId).eq("platform", "youtube").eq("status", "active").maybeSingle();
+  if (!acc || !hasStatsScopes("youtube", (acc.scopes as string[] | null) ?? [])) return false;
+  // Only into numbers that are this account's.
+  const { data: s } = await admin.from("analytics_syncs").select("account_ref").eq("team_id", teamId).eq("platform", "youtube").maybeSingle();
+  if (s && !sameAccount((s as { account_ref?: string | null }).account_ref ?? null, { externalId: acc.external_id as string, name: ((acc.username as string | null) ?? (acc.display_name as string | null)) ?? null })) return false;
+  const token = await getAccessToken(acc.id as string);
+  await syncYouTubeVideoDays(admin, acc as Account, token, [day], await linksFor(admin, teamId));
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -353,13 +495,18 @@ async function syncInstagram(admin: Admin, acc: Account, backfill: boolean, link
     const media = (await q(`${igId}/media`, { fields: "id,caption,media_type,media_product_type,permalink,thumbnail_url,media_url,timestamp,like_count,comments_count", limit: "25" })) as {
       data?: { id: string; caption?: string; media_type?: string; media_product_type?: string; permalink?: string; thumbnail_url?: string; media_url?: string; timestamp?: string; like_count?: number; comments_count?: number }[];
     };
-    const recs = [];
+    const recs: Record<string, unknown>[] = [];
+    // Reels' watch time, skip rate and reposts (0079): asked once with all
+    // three, then without the ones Instagram refuses for this account.
+    let reelSet = 0;
+    const REEL_SETS = ["ig_reels_avg_watch_time,reels_skip_rate,reposts", "ig_reels_avg_watch_time,reels_skip_rate", "ig_reels_avg_watch_time"];
     for (const m of media.data ?? []) {
       const link = links.byExternal.get(`instagram:${m.id}`) ?? (m.permalink ? links.byUrl(m.permalink) : null);
       let views: number | null = null;
       let reach: number | null = null;
       let shares: number | null = null;
       let saves: number | null = null;
+      const reel: Record<string, number | null> = {};
       try {
         const ins = (await q(`${m.id}/insights`, { metric: "views,reach,shares,saved" })) as { data?: { name: string; values?: { value?: number }[] }[] };
         for (const x of ins.data ?? []) {
@@ -370,7 +517,26 @@ async function syncInstagram(admin: Admin, acc: Account, backfill: boolean, link
           else if (x.name === "saved") saves = val;
         }
       } catch {}
+      if (m.media_product_type === "REELS" && reelSet < REEL_SETS.length) {
+        while (reelSet < REEL_SETS.length) {
+          try {
+            const ins = (await q(`${m.id}/insights`, { metric: REEL_SETS[reelSet] })) as { data?: { name: string; values?: { value?: number }[] }[] };
+            for (const x of ins.data ?? []) {
+              const val = num(x.values?.[0]?.value);
+              // Watch time comes in milliseconds; the skip rate as a percentage.
+              if (x.name === "ig_reels_avg_watch_time") reel.avg_view_seconds = val === null ? null : Math.round(val / 100) / 10;
+              else if (x.name === "reels_skip_rate") reel.skip_rate = val === null ? null : Math.round(val * 100) / 100;
+              else if (x.name === "reposts") reel.reposts = val;
+            }
+            break;
+          } catch (e) {
+            if (e instanceof ApiError && (e.status === 401 || e.status === 403)) break;
+            reelSet++;
+          }
+        }
+      }
       recs.push({
+        ...reel,
         team_id: acc.team_id,
         platform: "instagram",
         external_id: m.id,
@@ -390,7 +556,8 @@ async function syncInstagram(admin: Admin, acc: Account, backfill: boolean, link
         updated_at: new Date().toISOString(),
       });
     }
-    rows += await upsert(admin, "analytics_content", recs, "team_id,platform,external_id");
+    rows += await upsertSome(admin, "analytics_content", recs, "team_id,platform,external_id", NEW_CONTENT_COLS);
+    rows += await snapshotContent(admin, acc.team_id, "instagram", recs);
   } catch {}
   return { rows };
 }
@@ -444,6 +611,7 @@ async function syncTikTok(admin: Admin, acc: Account, links: Links) {
     cursor = r.data.cursor;
   }
   rows += await upsert(admin, "analytics_content", recs, "team_id,platform,external_id");
+  rows += await snapshotContent(admin, acc.team_id, "tiktok", recs);
   rows += await upsert(
     admin,
     "analytics_daily",
@@ -648,6 +816,7 @@ async function syncFacebook(admin: Admin, acc: Account, backfill: boolean, links
     });
   }
   rows += await upsert(admin, "analytics_content", recs, "team_id,platform,external_id");
+  rows += await snapshotContent(admin, acc.team_id, "facebook", recs);
   if (!ok) throw new ApiError(`Facebook refused every Page metric${failed.length ? ` (${failed[0]})` : ""}. Check the Page permissions (read_insights).`);
   return {
     rows,
@@ -698,24 +867,65 @@ async function upsert(admin: Admin, table: string, rows: Record<string, unknown>
   return n;
 }
 
+/** Columns added by migration 0079 (the sync works without them until it has run). */
+const NEW_DAILY_COLS = ["engaged_views", "avg_view_pct", "dislikes", "playlist_adds"];
+const NEW_CONTENT_COLS = ["engaged_views", "watch_minutes", "avg_view_seconds", "avg_view_pct", "subscribers_gained", "skip_rate", "reposts"];
+
+/** Upsert; on a database without the `optional` columns yet, again without them. */
+async function upsertSome(admin: Admin, table: string, rows: Record<string, unknown>[], onConflict: string, optional: string[]) {
+  try {
+    return await upsert(admin, table, rows, onConflict);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "";
+    const missingColumn = optional.some((c) => msg.includes(c)) || /column|schema cache/i.test(msg);
+    if (!missingColumn || !rows.some((r) => optional.some((c) => c in r))) throw e;
+    return upsert(admin, table, rows.map((r) => Object.fromEntries(Object.entries(r).filter(([k]) => !optional.includes(k)))), onConflict);
+  }
+}
+
+/**
+ * Each video's running totals as of today's copy (Instagram, TikTok and
+ * Facebook only share totals): what a video got on a day is the next day's
+ * copy minus that day's. Optional (before migration 0079 there's no table).
+ */
+async function snapshotContent(admin: Admin, teamId: string, platform: SocialPlatform, recs: Record<string, unknown>[]) {
+  const day = daysAgo(0);
+  const now = new Date().toISOString();
+  const snaps = recs
+    .filter((r) => r.views !== null && r.views !== undefined)
+    .map((r) => ({ team_id: teamId, platform, external_id: r.external_id, day, source: "total", views: r.views ?? null, likes: r.likes ?? null, comments: r.comments ?? null, shares: r.shares ?? null, updated_at: now }));
+  if (!snaps.length) return 0;
+  try {
+    return await upsert(admin, "analytics_content_days", snaps, "team_id,platform,external_id,day");
+  } catch {
+    return 0;
+  }
+}
+
 // ---------------------------------------------------------------------------
 
 /** Copy one team's numbers from every connected platform that allows it. */
 export async function syncTeamAnalytics(teamId: string): Promise<SyncResult[]> {
   const admin = createAdminClient();
-  const { data: accounts } = await admin.from("social_accounts").select("id, team_id, platform, external_id, scopes").eq("team_id", teamId).eq("status", "active");
+  const { data: accounts } = await admin.from("social_accounts").select("id, team_id, platform, external_id, scopes, username, display_name").eq("team_id", teamId).eq("status", "active");
   if (!accounts?.length) return [];
   const { data: syncs } = await admin.from("analytics_syncs").select("platform, backfilled").eq("team_id", teamId);
   const done = new Set((syncs ?? []).filter((s) => s.backfilled).map((s) => s.platform as string));
   const links = await linksFor(admin, teamId);
   const out: SyncResult[] = [];
   for (const a of accounts as Account[]) {
+    // The numbers stored for this platform must be this account's: another
+    // account's are deleted first, and this one's history is fetched again.
+    let fresh = false;
+    try {
+      fresh = (await adoptAccount(admin, teamId, a.platform, { externalId: a.external_id ?? "", name: a.username ?? a.display_name ?? null })).purged;
+    } catch {}
     if (!hasStatsScopes(a.platform, a.scopes ?? [])) {
       out.push({ platform: a.platform, ok: false, error: "Reconnect this account to allow stats.", rows: 0 });
       await admin.from("analytics_syncs").upsert({ team_id: teamId, platform: a.platform, last_run_at: new Date().toISOString(), last_error: "Reconnect this account to allow stats." }, { onConflict: "team_id,platform" });
       continue;
     }
-    const backfill = !done.has(a.platform);
+    const backfill = fresh || !done.has(a.platform);
     try {
       let rows = 0;
       let revenueNote: string | null = null;
@@ -740,6 +950,13 @@ export async function syncTeamAnalytics(teamId: string): Promise<SyncResult[]> {
     } catch (e) {
       console.error("[objectives] after analytics", e instanceof Error ? e.message : e);
     }
+  }
+  // Projections: today's value of each, a target reached, a deadline passed.
+  try {
+    const { recordProjections } = await import("@/modules/projections/lib/record");
+    await recordProjections(teamId);
+  } catch (e) {
+    console.error("[projections] after analytics", e instanceof Error ? e.message : e);
   }
   return out;
 }
@@ -768,7 +985,8 @@ export async function claimAnalyticsCatchUp(teamId: string): Promise<boolean> {
     if (!counted.length) return false;
     const cutoff = now - CATCH_UP_AFTER_HOURS * 3_600_000;
     const lastRun = new Map((syncs ?? []).map((s) => [s.platform as string, Date.parse((s.last_run_at as string | null) ?? "") || 0]));
-    const neverRun = counted.some((a) => !lastRun.has(a.platform));
+    // Never copied: no row yet, or a row without a run (a newly connected account's, 0079).
+    const neverRun = counted.some((a) => !lastRun.get(a.platform));
     const overdue = counted.some((a) => (lastRun.get(a.platform) ?? 0) < cutoff);
     if (!overdue) return false;
     if (!neverRun) {

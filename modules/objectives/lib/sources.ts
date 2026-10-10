@@ -4,6 +4,7 @@ import { isPlatform, isShortType, type Platform } from "@/modules/short-videos/l
 import { addDays } from "./periods";
 import type { Need } from "./metrics";
 import type { DailyRow, LongSrc, PostSrc, ShortSrc, Sources, StageSrc } from "./types";
+import { numbersVisibility, visibleRows } from "@/modules/analytics/lib/accounts";
 
 /*
  * Loads exactly the rows the objectives need, for one team and a range of
@@ -134,15 +135,19 @@ export async function loadSources(db: Db, teamId: string, needs: Set<Need>, from
     need("longsFilmed") ? all((a, b) => db.from("long_video_projects").select(LONG_COLS).eq("team_id", teamId).gte("filmed_at", fromIso).lt("filmed_at", toIso).range(a, b)) : none,
     need("longsEdited") ? all((a, b) => db.from("long_video_projects").select(LONG_COLS).eq("team_id", teamId).gte("edited_at", fromIso).lt("edited_at", toIso).range(a, b)) : none,
     need("daily")
-      ? all((a, b) =>
-          db
-            .from("analytics_daily")
-            .select("platform, day, content, views, likes, watch_minutes, followers_gained, followers_lost, followers, total_views, total_likes")
-            .eq("team_id", teamId)
-            .gte("day", addDays(from, -1))
-            .lte("day", addDays(to, 1))
-            .range(a, b)
-        )
+      ? Promise.all([
+          all((a, b) =>
+            db
+              .from("analytics_daily")
+              .select("platform, day, content, views, likes, watch_minutes, followers_gained, followers_lost, followers, total_views, total_likes")
+              .eq("team_id", teamId)
+              .gte("day", addDays(from, -1))
+              .lte("day", addDays(to, 1))
+              .range(a, b)
+          ),
+          numbersVisibility(db, teamId),
+          // Only the accounts connected now count (a disconnected or replaced account's numbers never do).
+        ]).then(([rows, vis]) => visibleRows(rows, vis))
       : none,
   ]);
 

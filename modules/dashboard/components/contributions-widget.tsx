@@ -11,7 +11,7 @@ import { WordIcon } from "@/components/ui/icons";
 
 const LEVEL_MIX = [0, 30, 55, 78, 100];
 const level = (n: number) => (n <= 0 ? 0 : n === 1 ? 1 : n <= 3 ? 2 : n <= 6 ? 3 : 4);
-export const CONTRIB_COLORS = ["#22c55e", "#3b82f6", "#a855f7", "#ec4899", "#f97316", "#eab308", "#14b8a6"];
+export { CONTRIB_COLORS } from "../layout";
 
 /** GitHub-style grid: one square per day, more finished tasks (and the daily word) = more intense. */
 export function ContributionsWidget({ done, teamId, settings }: { done: Done[]; teamId: string; settings?: Record<string, unknown> }) {

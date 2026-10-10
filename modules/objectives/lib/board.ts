@@ -3,11 +3,11 @@ import { colorForId, displayName } from "@/lib/avatar";
 import { hasStatsScopes, type SocialPlatform } from "@/lib/social/providers";
 import { PLATFORM_META, type Platform } from "@/modules/short-videos/lib/constants";
 import { METRICS, cleanFilters, describe, isMetricId, isObjectiveColor, type IconKind, type Need, type ObjectiveFilters } from "./metrics";
-import { HISTORY, isPeriodKind, localNow, periodEnd, periodLabel, periodRange, periodStart, recentPeriods, type LocalNow, type PeriodKind } from "./periods";
+import { HISTORY, dayInZone, isPeriodKind, localNow, periodEnd, periodLabel, periodRange, periodStart, recentPeriods, type LocalNow, type PeriodKind } from "./periods";
 import { hitsFor } from "./hits";
-import { contributorsOf, paceFor, periodResult, streakOf, type PeriodResult } from "./compute";
+import { contributorsOf, firstCounted, paceFor, periodResult, statsOf, type PeriodResult } from "./compute";
 import { loadSources, type Db } from "./sources";
-import type { Board, CurrentView, Hit, ItemView, ObjectiveView, PeriodView, PersonLite, Sources, WinView, WinnerView } from "./types";
+import type { Board, CurrentView, Hit, ItemView, ObjectiveView, PeriodView, PersonLite, Sources, Status, WinView, WinnerView } from "./types";
 
 /*
  * Everything the Objectives page, the dashboard widget and Team → Objectives
@@ -127,14 +127,20 @@ function itemsOf(hits: Hit[]): ItemView[] {
 
 const iconOf = (metric: string): IconKind => (isMetricId(metric) ? METRICS[metric].icon : "post");
 
-/** One objective, from its hits: the current period in full, the ones before as history. */
+/**
+ * One objective, from its hits: the current period in full, the ones before
+ * as history. Periods from before the objective was set are shown but not
+ * judged (status "before"); `whatIf` (the editor's preview) judges them all,
+ * to show how this target would have gone. `tz`: the team's time zone (the
+ * day the objective was set).
+ */
 export function viewFor(
   row: ObjectiveRow,
   src: Sources | null,
   overrides: Map<string, Map<string, number>>,
   people: Record<string, PersonLite>,
   now: LocalNow,
-  opts: { history: History; items: boolean }
+  opts: { history: History; items: boolean; tz: string; whatIf?: boolean }
 ): ObjectiveView {
   const kind = kindOf(row.period);
   const metric = row.metric;
@@ -144,22 +150,34 @@ export function viewFor(
   const starts = recentPeriods(kind, now.day, historyCount(kind, opts.history));
   const hits = known && src ? hitsFor({ metric, filters }, src, starts[0], now.day) : [];
   const results: PeriodResult[] = starts.map((s) => periodResult(hits, s, periodEnd(kind, s), targetIn(row, overrides, s)));
-  const toView = (r: PeriodResult): PeriodView => ({
-    start: r.start,
-    end: r.end,
-    label: periodLabel(kind, r.start, now.day),
-    range: periodRange(kind, r.start),
-    target: r.target,
-    value: r.value,
-    reached: r.reached,
-    reachedAt: r.reachedAt,
-    reachedDay: r.reachedDay,
-    status: paceFor(kind, r, now, lag).status,
-  });
   const cur = results[results.length - 1];
+  const first = opts.whatIf ? starts[0] : firstCounted(kind, row.created_at ? dayInZone(row.created_at, opts.tz) : starts[0], cur.start);
+  // Platform numbers: a finished period without a single copied day (no
+  // account connected then) has nothing to judge.
+  const platforms: string[] = !known || !lag ? [] : metric === "watch_hours" ? ["youtube"] : filters.platforms?.length ? filters.platforms : [...METRICS[metric].platforms];
+  const hasNumbers = (r: PeriodResult) => !platforms.length || !!src?.daily.some((d) => d.day >= r.start && d.day <= r.end && platforms.includes(d.platform));
+  const statusOf = (r: PeriodResult): Status =>
+    r !== cur && r.start < first ? "before" : r !== cur && !hasNumbers(r) ? "nodata" : paceFor(kind, r, now, lag).status;
+  const toView = (r: PeriodResult): PeriodView => {
+    const status = statusOf(r);
+    const judged = status !== "before" && status !== "nodata";
+    return {
+      start: r.start,
+      end: r.end,
+      label: periodLabel(kind, r.start, now.day),
+      range: periodRange(kind, r.start),
+      target: r.target,
+      value: r.value,
+      reached: judged && r.reached,
+      reachedAt: judged ? r.reachedAt : null,
+      reachedDay: judged ? r.reachedDay : null,
+      status,
+    };
+  };
   const pace = paceFor(kind, cur, now, lag);
   const member = filters.member ? people[filters.member]?.name ?? "A former teammate" : null;
-  const finished = results.slice(0, -1).filter((r) => r.target > 0);
+  // Only the periods since the objective was set, with numbers to judge, count.
+  const counting = results.filter((r) => r === cur || (r.start >= first && hasNumbers(r)));
   const current: CurrentView = {
     ...toView(cur),
     status: pace.status,
@@ -193,13 +211,7 @@ export function viewFor(
     lagDays: lag,
     current,
     history: results.map(toView),
-    stats: {
-      streak: streakOf(results),
-      best: results.reduce((m, r) => Math.max(m, r.value), 0),
-      reached: results.filter((r) => r.reached).length,
-      counted: finished.length + (cur.reached ? 1 : 0),
-      average: finished.length ? Math.round((finished.reduce((s, r) => s + r.value, 0) / finished.length) * 10) / 10 : null,
-    },
+    stats: statsOf(counting),
     overrides: ov ? [...ov.entries()].filter(([s]) => s >= periodStart(kind, now.day)).sort(([a], [b]) => a.localeCompare(b)).map(([start, target]) => ({ start, target })) : [],
   };
 }
@@ -271,7 +283,7 @@ export async function getObjectivesBoard(db: Db, teamId: string, opts: { history
     today: now.day,
     now,
     generatedAt: new Date().toISOString(),
-    objectives: rows.map((r) => viewFor(r, src, overrides, people, now, { history, items: opts.items ?? false })),
+    objectives: rows.map((r) => viewFor(r, src, overrides, people, now, { history, items: opts.items ?? false, tz })),
     wins,
     people,
     audienceReady: audience,

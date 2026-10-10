@@ -1,27 +1,87 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, useTransition } from "react";
+import dynamic from "next/dynamic";
 import { Dialog } from "@/components/ui/dialog";
 import { Select } from "@/components/ui/select";
-import { MAP_MODES } from "@/modules/analytics/components/audience-map";
+import { MAP_MODES } from "@/modules/analytics/lib/map-modes";
 import { CloseIcon, FillIcon, GripIcon, PlusIcon, ResizeCornerIcon, SettingsIcon } from "@/components/ui/icons";
 import { useToast } from "@/components/ui/toast-provider";
 import { sounds } from "@/lib/sounds";
 import { saveLayout } from "../actions";
 import { COLS, bottom, fill, preview as previewBoxes, compact, readingOrder, type Box, type Interaction } from "../grid";
-import { CATALOG, DEFAULT_LAYOUT, addWidget, applyBoxes, limitsFor, toBox, type Layout, type WidgetInstance, type WidgetType } from "../layout";
+import { CATALOG, CONTRIB_COLORS, DEFAULT_LAYOUT, addWidget, applyBoxes, limitsFor, toBox, type Layout, type WidgetInstance, type WidgetType } from "../layout";
 import type { Done, Pipeline, PostToday, Task, TeamCard, TeamTasks, Todo, UpcomingLong, UpcomingShort } from "../lib/queries";
 import { BoxContext } from "./widget-box";
-import { TasksWidget } from "./tasks-widget";
-import { CONTRIB_COLORS, ContributionsWidget } from "./contributions-widget";
-import { TodoWidget } from "./todo-widget";
-import { ClockWidget, MiniCalendarWidget, TeamsWidget } from "./small-widgets";
-import { PipelineWidget, PostingTodayWidget, UpcomingLongsWidget, UpcomingShortsWidget, WeatherCitySearch, WeatherWidget } from "./team-widgets";
-import { WordWidget } from "./word-widget";
-import { ObjectivesWidget, ObjectivesWidgetSettingsForm } from "./objectives-widget";
-import { MeetingsWidget } from "./meetings-widget";
-import { AudienceMapWidget, FollowersWidget, OutputWidget, TopVideosWidget, ViewsWidget } from "./analytics-widgets";
+import { WidgetBoundary } from "./widget-boundary";
 import type { Meeting } from "@/modules/meetings/lib/types";
+
+/** A widget's box before it's drawn (and while its code downloads). */
+function WidgetSkeleton() {
+  return (
+    <div className="space-y-2 pt-0.5" aria-hidden>
+      <div className="h-3 w-2/3 rounded bg-surface-2/70" />
+      <div className="h-3 w-1/2 rounded bg-surface-2/50" />
+    </div>
+  );
+}
+
+/*
+ * Each widget's code is downloaded only when it's on the board (or the
+ * widget library is open), so the dashboard loads just what it shows.
+ * While it downloads, its box shows the same skeleton as before widgets
+ * are drawn. PRELOAD starts the downloads early (see DashboardStudio).
+ */
+const TasksWidget = dynamic(() => import("./tasks-widget").then((m) => m.TasksWidget), { ssr: false, loading: WidgetSkeleton });
+const ContributionsWidget = dynamic(() => import("./contributions-widget").then((m) => m.ContributionsWidget), { ssr: false, loading: WidgetSkeleton });
+const TodoWidget = dynamic(() => import("./todo-widget").then((m) => m.TodoWidget), { ssr: false, loading: WidgetSkeleton });
+const ClockWidget = dynamic(() => import("./small-widgets").then((m) => m.ClockWidget), { ssr: false, loading: WidgetSkeleton });
+const MiniCalendarWidget = dynamic(() => import("./small-widgets").then((m) => m.MiniCalendarWidget), { ssr: false, loading: WidgetSkeleton });
+const TeamsWidget = dynamic(() => import("./small-widgets").then((m) => m.TeamsWidget), { ssr: false, loading: WidgetSkeleton });
+const PipelineWidget = dynamic(() => import("./team-widgets").then((m) => m.PipelineWidget), { ssr: false, loading: WidgetSkeleton });
+const PostingTodayWidget = dynamic(() => import("./team-widgets").then((m) => m.PostingTodayWidget), { ssr: false, loading: WidgetSkeleton });
+const UpcomingLongsWidget = dynamic(() => import("./team-widgets").then((m) => m.UpcomingLongsWidget), { ssr: false, loading: WidgetSkeleton });
+const UpcomingShortsWidget = dynamic(() => import("./team-widgets").then((m) => m.UpcomingShortsWidget), { ssr: false, loading: WidgetSkeleton });
+const WeatherWidget = dynamic(() => import("./team-widgets").then((m) => m.WeatherWidget), { ssr: false, loading: WidgetSkeleton });
+const WeatherCitySearch = dynamic(() => import("./team-widgets").then((m) => m.WeatherCitySearch), { ssr: false, loading: WidgetSkeleton });
+const WordWidget = dynamic(() => import("./word-widget").then((m) => m.WordWidget), { ssr: false, loading: WidgetSkeleton });
+const ObjectivesWidget = dynamic(() => import("./objectives-widget").then((m) => m.ObjectivesWidget), { ssr: false, loading: WidgetSkeleton });
+const ObjectivesWidgetSettingsForm = dynamic(() => import("./objectives-widget").then((m) => m.ObjectivesWidgetSettingsForm), { ssr: false, loading: WidgetSkeleton });
+const MeetingsWidget = dynamic(() => import("./meetings-widget").then((m) => m.MeetingsWidget), { ssr: false, loading: WidgetSkeleton });
+const AudienceMapWidget = dynamic(() => import("./analytics-widgets").then((m) => m.AudienceMapWidget), { ssr: false, loading: WidgetSkeleton });
+const FollowersWidget = dynamic(() => import("./analytics-widgets").then((m) => m.FollowersWidget), { ssr: false, loading: WidgetSkeleton });
+const OutputWidget = dynamic(() => import("./analytics-widgets").then((m) => m.OutputWidget), { ssr: false, loading: WidgetSkeleton });
+const TopVideosWidget = dynamic(() => import("./analytics-widgets").then((m) => m.TopVideosWidget), { ssr: false, loading: WidgetSkeleton });
+const ViewsWidget = dynamic(() => import("./analytics-widgets").then((m) => m.ViewsWidget), { ssr: false, loading: WidgetSkeleton });
+
+const PRELOAD: Record<WidgetType, () => Promise<unknown>> = {
+  tasks: () => import("./tasks-widget"),
+  contributions: () => import("./contributions-widget"),
+  todo: () => import("./todo-widget"),
+  teams: () => import("./small-widgets"),
+  clock: () => import("./small-widgets"),
+  minicalendar: () => import("./small-widgets"),
+  upcomingShorts: () => import("./team-widgets"),
+  upcomingLongs: () => import("./team-widgets"),
+  pipeline: () => import("./team-widgets"),
+  posting: () => import("./team-widgets"),
+  weather: () => import("./team-widgets"),
+  meetings: () => import("./meetings-widget"),
+  views: () => import("./analytics-widgets"),
+  followers: () => import("./analytics-widgets"),
+  topVideos: () => import("./analytics-widgets"),
+  audienceMap: () => import("./analytics-widgets"),
+  output: () => import("./analytics-widgets"),
+  word: () => import("./word-widget"),
+  objectives: () => import("./objectives-widget"),
+};
+
+/** Starts downloading these widgets' code (each once; a failure shows in the widget's own box). */
+function preload(types: Iterable<WidgetType>) {
+  if (typeof window === "undefined") return;
+  for (const t of new Set(types)) PRELOAD[t]?.().catch(() => {});
+}
+const preloadAll = () => preload(Object.keys(CATALOG) as WidgetType[]);
 
 export type StudioData = {
   tasks: Task[];
@@ -82,6 +142,8 @@ export function DashboardStudio({ name, initial, data }: { name: string; initial
   const editing = !!draft;
   const shown = draft ?? layout;
   const mounted = useMounted();
+  // The board's widgets start downloading while the page wakes up (drawn once it has).
+  useState(() => preload(initial.widgets.map((w) => w.type)));
   const [hello, setHello] = useState("Welcome back");
   useEffect(() => setHello(greeting()), []);
 
@@ -95,7 +157,10 @@ export function DashboardStudio({ name, initial, data }: { name: string; initial
       toast.success("Dashboard saved");
     });
   }
-  const edit = () => setDraft(structuredClone(layout));
+  const edit = () => {
+    preloadAll(); // the library shows every widget
+    setDraft(structuredClone(layout));
+  };
   const set = (patch: Partial<Layout>) => setDraft((d) => (d ? { ...d, ...patch } : d));
   const active = data.tasks.filter((t) => t.state === "active").length;
   const editingWidget = shown.widgets.find((w) => w.id === settingsFor) ?? null;
@@ -112,7 +177,7 @@ export function DashboardStudio({ name, initial, data }: { name: string; initial
           <p className="text-[13px] text-ink-soft">{active ? `You have ${active} thing${active === 1 ? "" : "s"} on your plate.` : "Nothing on your plate right now."}</p>
         </div>
         {!editing ? (
-          <button type="button" onClick={edit} className="inline-flex items-center gap-1.5 rounded-lg border border-line/20 px-3 h-8 text-[12.5px] font-semibold text-ink-soft hover:text-ink hover:border-line/40 hover:bg-surface-2">
+          <button type="button" onClick={edit} onPointerEnter={preloadAll} onFocus={preloadAll} className="inline-flex items-center gap-1.5 rounded-lg border border-line/20 px-3 h-8 text-[12.5px] font-semibold text-ink-soft hover:text-ink hover:border-line/40 hover:bg-surface-2">
             <SettingsIcon className="w-3.5 h-3.5" />
             Customize
           </button>
@@ -166,7 +231,9 @@ export function DashboardStudio({ name, initial, data }: { name: string; initial
       <Dialog open={library} onClose={() => setLibrary(false)} title="Add a widget" description="Tap one to put it on your dashboard. You can move and resize it after." width="sm:max-w-5xl">
         {library && (
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {(Object.keys(CATALOG) as WidgetType[]).map((type) => (
+            {(Object.keys(CATALOG) as WidgetType[])
+              .sort((a, b) => Number(!!CATALOG[b].isNew) - Number(!!CATALOG[a].isNew))
+              .map((type) => (
               <LibraryTile
                 key={type}
                 type={type}
@@ -557,7 +624,7 @@ function Board({
               onRemove={() => remove(w.id)}
               onSettings={() => onSettings(w.id)}
             >
-              {mounted ? renderWidget(w, data) : <WidgetSkeleton />}
+              {mounted ? <WidgetBoundary name={CATALOG[w.type].name}>{renderWidget(w, data)}</WidgetBoundary> : <WidgetSkeleton />}
             </WidgetCard>
           );
         })}
@@ -748,15 +815,6 @@ function WidgetCard({
   );
 }
 
-function WidgetSkeleton() {
-  return (
-    <div className="space-y-2 pt-0.5" aria-hidden>
-      <div className="h-3 w-2/3 rounded bg-surface-2/70" />
-      <div className="h-3 w-1/2 rounded bg-surface-2/50" />
-    </div>
-  );
-}
-
 // ---------------------------------------------------------------------------
 // Library: every widget, drawn small with your real data
 // ---------------------------------------------------------------------------
@@ -796,13 +854,18 @@ function LibraryTile({ type, added, data, onAdd }: { type: WidgetType; added: bo
         >
           {!meta.bare && <div className="h-5 mb-2 text-[11px] font-bold uppercase tracking-wider text-ink-faint flex-shrink-0">{meta.name}</div>}
           <BoxContext.Provider value={{ w: nw - 24, h: nh - 24 - (meta.bare ? 0 : 28) }}>
-            <div className="flex-1 min-h-0 flex flex-col">{renderWidget({ type, settings: meta.settings }, data)}</div>
+            <div className="flex-1 min-h-0 flex flex-col">
+              <WidgetBoundary name={meta.name}>{renderWidget({ type, settings: meta.settings }, data)}</WidgetBoundary>
+            </div>
           </BoxContext.Provider>
         </div>
         {added && <span className="absolute top-2 right-2 rounded-md bg-surface/90 border border-line/15 px-1.5 h-5 inline-flex items-center text-[10.5px] font-bold text-ink-soft">On your dashboard</span>}
       </div>
       <div className="flex items-center gap-2 px-1 pt-2">
-        <span className="text-[13.5px] font-semibold flex-1">{meta.name}</span>
+        <span className="text-[13.5px] font-semibold flex-1 min-w-0 truncate">
+          {meta.name}
+          {meta.isNew && <span className="ml-1.5 align-[1px] rounded-full bg-amber text-white px-1.5 py-px text-[9.5px] font-bold uppercase tracking-wide">New</span>}
+        </span>
         {!added && (
           <span className="inline-flex items-center gap-1 rounded-md bg-amber/10 text-amber px-1.5 h-6 text-[11.5px] font-bold opacity-80 group-hover:opacity-100">
             <PlusIcon className="w-3 h-3" strokeWidth={2.5} /> Add

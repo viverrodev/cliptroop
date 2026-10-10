@@ -2,7 +2,7 @@
  * Progress per period, pace, streaks and who helped. Pure (tested in
  * tests/objectives.test.ts): the server feeds it hits (lib/hits.ts).
  */
-import { daysLeft, elapsed, type LocalNow, type PeriodKind } from "./periods";
+import { daysLeft, elapsed, periodStart, type LocalNow, type PeriodKind } from "./periods";
 import type { Contributor, Credit, Hit, Status } from "./types";
 
 export type PeriodResult = {
@@ -88,6 +88,38 @@ export function streakOf(periods: { target: number; value: number }[]): number {
     else break;
   }
   return n;
+}
+
+/**
+ * The first period an objective is judged on: the one it was set in (a goal
+ * set mid-week counts that whole week). Periods before it are still shown,
+ * as what happened then, but never as "missed", and they never count toward
+ * a streak, a best, an average or "reached X of Y".
+ */
+export function firstCounted(kind: PeriodKind, createdDay: string, currentStart: string): string {
+  const s = periodStart(kind, createdDay);
+  // (A creation date in the future, from a wrong clock, never hides the current period.)
+  return s > currentStart ? currentStart : s;
+}
+
+export type Stats = { streak: number; best: number; reached: number; counted: number; average: number | null };
+
+/**
+ * Streak, best, reached and average, from the periods that count (oldest
+ * first, the current one last; periods before the goal and periods without
+ * numbers already left out). The average is over finished periods only.
+ */
+export function statsOf(periods: { target: number; value: number; reached: boolean }[]): Stats {
+  if (!periods.length) return { streak: 0, best: 0, reached: 0, counted: 0, average: null };
+  const cur = periods[periods.length - 1];
+  const finished = periods.slice(0, -1).filter((r) => r.target > 0);
+  return {
+    streak: streakOf(periods),
+    best: periods.reduce((m, r) => Math.max(m, r.value), 0),
+    reached: periods.filter((r) => r.reached).length,
+    counted: finished.length + (cur.reached ? 1 : 0),
+    average: finished.length ? Math.round((finished.reduce((s, r) => s + r.value, 0) / finished.length) * 10) / 10 : null,
+  };
 }
 
 /** Who helped: each person's count of the period's hits (and their parts), most first. */

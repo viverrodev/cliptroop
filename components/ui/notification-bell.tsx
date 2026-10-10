@@ -90,6 +90,10 @@ export type NotificationItem = {
     unit?: string;
     color?: string;
     winner?: { kind?: string; number?: number; title?: string; people?: string[] } | null;
+    /** projection_reached / projection_ended (1.15.0). */
+    title?: string;
+    early?: number;
+    made?: boolean;
   } | null;
 };
 
@@ -127,10 +131,20 @@ function LeadingVisual({ n }: { n: NotificationItem }) {
   const TypeIcon = n.short_id ? ShortsIcon : n.project_id ? VideoIcon : null;
   const failed = m?.ok === false;
 
-  if (n.kind === "objective_reached") {
+  if (n.kind === "objective_reached" || n.kind === "projection_reached" || (n.kind === "projection_ended" && m?.made)) {
     return (
-      <span className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: "rgb(245 197 66 / 0.22)", color: "#b8860b" }} aria-label="Objective reached">
+      <span className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: "rgb(245 197 66 / 0.22)", color: "#b8860b" }} aria-label={n.kind === "objective_reached" ? "Objective reached" : "Projection reached"}>
         <TrophyIcon className="w-4 h-4" />
+      </span>
+    );
+  }
+  if (n.kind === "projection_ended") {
+    return (
+      <span className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 bg-surface-2 text-ink-soft" aria-label="Projection ended">
+        <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+          <path d="M5 21V4" />
+          <path d="M5 4h11l-2 4 2 4H5" />
+        </svg>
       </span>
     );
   }
@@ -432,6 +446,25 @@ function RichBody({ n }: { n: NotificationItem }) {
         </>
       );
     }
+    case "projection_reached":
+      return (
+        <>
+          Projection reached: <b>{m.title}</b>, {m.targetText}
+          {m.unit ? ` ${m.unit}` : ""}
+          {m.early ? <span className="text-ink-soft">, {m.early} day{m.early === 1 ? "" : "s"} early</span> : null}. Well done, everyone!
+        </>
+      );
+    case "projection_ended":
+      return m.made ? (
+        <>
+          <b>{m.title}</b> ended on target at {m.valueText}.
+        </>
+      ) : (
+        <>
+          <b>{m.title}</b> ended at {m.valueText} of {m.targetText}
+          {m.unit ? ` ${m.unit}` : ""}. <span className="text-ink-soft">Set the next one?</span>
+        </>
+      );
     case "meeting_scheduled":
     case "meeting_changed":
     case "meeting_cancelled":

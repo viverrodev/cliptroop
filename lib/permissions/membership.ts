@@ -2,6 +2,7 @@ import { cache } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { type RoleId, hasStageAccess, isMaster, type PipelineStage } from "./roles";
 import { getCachedUser } from "@/lib/supabase/get-user";
+import { retryOnce } from "@/lib/supabase/retry";
 
 export type Membership = {
   teamMemberId: string;
@@ -25,13 +26,16 @@ export const getMembership = cache(async function getMembership(
   const user = await getCachedUser();
   if (!user) return null;
 
-  const { data } = await supabase
-    .from("team_members")
-    .select("id, member_roles(role)")
-    .eq("team_id", teamId)
-    .eq("user_id", user.id)
-    .eq("status", "active")
-    .single();
+  // A passing error gets another try (it would otherwise read as "not on this team").
+  const { data } = await retryOnce(() =>
+    supabase
+      .from("team_members")
+      .select("id, member_roles(role)")
+      .eq("team_id", teamId)
+      .eq("user_id", user.id)
+      .eq("status", "active")
+      .maybeSingle()
+  );
 
   if (!data) return null;
 

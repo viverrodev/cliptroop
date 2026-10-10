@@ -1,13 +1,14 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Dialog } from "@/components/ui/dialog";
-import { CalendarIcon, EditIcon, FlameIcon, ShortsIcon, TrophyIcon, VideoIcon } from "@/components/ui/icons";
+import { CalendarIcon, ChevronRightIcon, EditIcon, FlameIcon, ShortsIcon, TrophyIcon, VideoIcon } from "@/components/ui/icons";
 import { PlatformIcon } from "@/modules/short-videos/components/platform-icon";
 import { PersonAvatar } from "@/modules/short-videos/components/person-chip";
 import { formatAmount, unitFor } from "../lib/metrics";
 import type { Credit, ObjectiveView, PersonLite } from "../lib/types";
-import { HistoryBars, Meter, ObjectiveIcon, StatusPill, useWhen } from "./parts";
+import { HistoryBars, Meter, ObjectiveIcon, StatusPill, unjudged, useWhen } from "./parts";
 import { byWhen, perDayWords, progressWords } from "./objective-card";
 import { ONE } from "./schedule-dialog";
 
@@ -31,12 +32,20 @@ function Tile({ label, value, sub }: { label: string; value: React.ReactNode; su
 
 export function ObjectiveDetail({ o, people, canEdit, onClose, onSchedule }: { o: ObjectiveView | null; people: Record<string, PersonLite>; canEdit: boolean; onClose: () => void; onSchedule: () => void }) {
   const when = useWhen();
+  const [showBefore, setShowBefore] = useState(false);
+  useEffect(() => setShowBefore(false), [o?.id]);
   if (!o) return null;
   const c = o.current;
   const unit = unitFor(o.metric, c.target || o.target, o.filters);
   const past = o.history.slice(0, -1);
-  const counted = past.filter((p) => p.target > 0);
+  // Only periods since the goal was set (with numbers) count; earlier ones are shown, never judged.
+  const counted = past.filter((p) => p.target > 0 && !unjudged(p));
   const won = counted.filter((p) => p.reached).length;
+  const newestFirst = [...o.history].reverse();
+  const since = newestFirst.filter((p) => p.status !== "before");
+  const before = newestFirst.filter((p) => p.status === "before");
+  const one = ONE[o.period];
+  const Many = `${one.charAt(0).toUpperCase() + one.slice(1)}s`;
   return (
       <Dialog open={!!o} onClose={onClose} title={o.title} description={o.sentence} width="sm:max-w-3xl">
         <div className="space-y-6">
@@ -77,8 +86,12 @@ export function ObjectiveDetail({ o, people, canEdit, onClose, onSchedule }: { o
               sub={`${ONE[o.period]}${o.stats.streak === 1 ? "" : "s"} reached`}
             />
             <Tile label="Best" value={formatAmount(o.metric, o.stats.best)} sub={unit} />
-            <Tile label="Reached" value={`${won}/${counted.length}`} sub={`the last ${counted.length || ""} ${ONE[o.period]}${counted.length === 1 ? "" : "s"}`.replace("  ", " ")} />
-            <Tile label="Average" value={o.stats.average === null ? "–" : formatAmount(o.metric, o.stats.average)} sub={`a ${ONE[o.period]}`} />
+            <Tile
+              label="Reached"
+              value={counted.length ? `${won}/${counted.length}` : "–"}
+              sub={!counted.length ? `no full ${one} yet` : before.length ? "since it was set" : counted.length === 1 ? `the last ${one}` : `the last ${counted.length} ${one}s`}
+            />
+            <Tile label="Average" value={o.stats.average === null ? "–" : formatAmount(o.metric, o.stats.average)} sub={o.stats.average === null ? `once a ${one} ends` : `a ${one}`} />
           </section>
 
           <section>
@@ -101,16 +114,18 @@ export function ObjectiveDetail({ o, people, canEdit, onClose, onSchedule }: { o
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-line/10">
-                  {[...o.history].reverse().map((p) => (
+                  {since.map((p) => (
                     <tr key={p.start} className={p.reached ? "" : "text-ink-soft"}>
                       <td className="px-3 py-2">
                         <span className="font-semibold text-ink">{p.label}</span>
                         <span className="text-ink-faint hidden sm:inline"> · {p.range}</span>
                       </td>
                       <td className="px-3 py-2 text-right tabular-nums">{p.target ? formatAmount(o.metric, p.target) : "Off"}</td>
-                      <td className="px-3 py-2 text-right tabular-nums font-semibold text-ink">{formatAmount(o.metric, p.value)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums font-semibold text-ink">{p.status === "nodata" ? "–" : formatAmount(o.metric, p.value)}</td>
                       <td className="px-3 py-2 text-right hidden sm:table-cell">
-                        {p.target === 0 ? (
+                        {p.status === "nodata" ? (
+                          <span className="text-ink-faint" title="No account was connected for these numbers then">No numbers</span>
+                        ) : p.target === 0 ? (
                           <span className="text-ink-faint">Off</span>
                         ) : p.reached ? (
                           <span className="inline-flex items-center gap-1 text-green font-semibold">
@@ -125,9 +140,41 @@ export function ObjectiveDetail({ o, people, canEdit, onClose, onSchedule }: { o
                       </td>
                     </tr>
                   ))}
+                  {before.length > 0 && (
+                    <tr>
+                      <td colSpan={4} className="p-0">
+                        <button
+                          type="button"
+                          onClick={() => setShowBefore((v) => !v)}
+                          aria-expanded={showBefore}
+                          className="w-full flex items-center gap-2 px-3 py-2 text-left text-[12px] text-ink-faint hover:text-ink hover:bg-surface-2/40 transition-colors"
+                        >
+                          <ChevronRightIcon className={`w-3.5 h-3.5 transition-transform duration-200 ${showBefore ? "rotate-90" : ""}`} />
+                          <span className="flex-1">
+                            {before.length === 1 ? `1 ${one}` : `${before.length} ${one}s`} before this goal was set
+                            <span className="hidden sm:inline">: shown for context, never counted</span>
+                          </span>
+                          <span className="font-semibold">{showBefore ? "Hide" : "Show"}</span>
+                        </button>
+                      </td>
+                    </tr>
+                  )}
+                  {showBefore &&
+                    before.map((p) => (
+                      <tr key={p.start} className="text-ink-faint bg-surface-2/20 obj-row-in">
+                        <td className="px-3 py-2">
+                          <span className="font-semibold">{p.label}</span>
+                          <span className="hidden sm:inline"> · {p.range}</span>
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums">–</td>
+                        <td className="px-3 py-2 text-right tabular-nums">{formatAmount(o.metric, p.value)}</td>
+                        <td className="px-3 py-2 text-right hidden sm:table-cell">Not set yet</td>
+                      </tr>
+                    ))}
                 </tbody>
               </table>
             </div>
+            {before.length > 0 && <p className="mt-2 text-[11.5px] text-ink-faint">{Many} before the goal was set don&apos;t count toward streaks, bests or averages.</p>}
           </section>
 
           {c.contributors.length > 0 && (

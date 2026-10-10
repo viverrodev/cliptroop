@@ -7,6 +7,7 @@ import { requireSocialManager } from "@/lib/social/access";
 import { encryptToken } from "@/lib/social/crypto";
 import { logSocial } from "@/lib/social/tokens";
 import { POPUP_COOKIE } from "@/lib/social/popup";
+import { adoptAccount } from "@/modules/analytics/lib/accounts";
 
 export const dynamic = "force-dynamic";
 
@@ -173,14 +174,10 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       throw new ProviderError("Couldn't save the connection.");
     }
 
-    // A different channel / account / Page than before: its old numbers don't belong to this one.
-    if (existing?.external_id && existing.external_id !== profile.externalId) {
-      await Promise.all(
-        ["analytics_daily", "analytics_countries", "analytics_content", "analytics_syncs", ...(platform === "youtube" || platform === "facebook" ? ["analytics_revenue_daily"] : [])].map((t) =>
-          admin.from(t).delete().eq("team_id", saved.team_id).eq("platform", platform)
-        )
-      );
-    }
+    // A different channel / account / Page than the one whose numbers we
+    // have (even one disconnected weeks ago): its numbers go before anything
+    // is copied, so two accounts never mix (modules/analytics/lib/accounts.ts).
+    await adoptAccount(admin, saved.team_id as string, platform, { externalId: profile.externalId, name: profile.username ?? profile.displayName }, existing?.external_id ?? null);
 
     await logSocial(saved.team_id as string, platform, existing ? "reconnected" : "connected", access.user.id, {
       account: profile.username ?? profile.displayName,

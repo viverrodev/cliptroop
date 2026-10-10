@@ -17,7 +17,7 @@ import { ScriptEditor } from "./script-editor";
 import { ScriptImage } from "./script-image";
 import type { DocListItem, ScriptComment, ScriptRow } from "../lib/queries";
 import { findQuote } from "../lib/anchors";
-import { addComment, createDoc, deleteComment, deleteDoc, getDocContent, renameDoc, resolveComment, saveScript } from "@/app/(dashboard)/scripts/actions";
+import { addComment, createDoc, deleteComment, deleteDoc, getDocContent, renameDoc, resolveComment, resolveComments, saveScript } from "@/app/(dashboard)/scripts/actions";
 import { Dialog } from "@/components/ui/dialog";
 import { AnchoredMenu } from "@/components/ui/anchored-menu";
 import { Lightbox } from "@/components/ui/lightbox";
@@ -283,11 +283,16 @@ function Workspace({
       }}
       rightPanel={
         <CommentsChat
+          // A fresh panel per document (its own comments, its own "text changed" check).
+          key={doc.id}
           open={chatOpen}
           setOpen={setChatOpen}
           comments={comments}
           active={active}
           onPick={setActive}
+          docId={doc.id}
+          docName={doc.name}
+          number={number}
           docContent={doc.content}
           colorOf={colorOf}
           roleColors={roleColors}
@@ -777,13 +782,22 @@ function commentColor(c: ScriptComment, _roleColors?: Record<string, string>) {
   return TYPE_COLOR[c.kind];
 }
 
-/** Comments as a small chat: a floating button, a panel on desktop, a sheet on phones. */
+/**
+ * Comments as a small chat: a floating button, a panel on desktop, a sheet on
+ * phones. Every document has its own (this video's Script, Review, Staging,
+ * Research…): the panel names the one it belongs to. Comments left on words
+ * that were rewritten since are kept apart at the end, so they never look
+ * like they came from somewhere else.
+ */
 function CommentsChat({
   open,
   setOpen,
   comments,
   active,
   onPick,
+  docId,
+  docName,
+  number,
   docContent,
   colorOf,
   roleColors,
@@ -798,6 +812,9 @@ function CommentsChat({
   comments: ScriptComment[];
   active: string | null;
   onPick: (id: string) => void;
+  docId: string;
+  docName: string;
+  number: number;
   docContent: Record<string, unknown>;
   colorOf: (c: ScriptComment) => string;
   roleColors: Record<string, string>;
@@ -818,19 +835,107 @@ function CommentsChat({
   useEffect(() => {
     if (open) listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
   }, [open, comments.length]);
-  // Which quotes can no longer be found (the text was rewritten).
-  const [missing, setMissing] = useState<Set<string>>(new Set());
+  // Which quotes can no longer be found (the text was rewritten). Null until the text is read.
+  const [missing, setMissing] = useState<Set<string> | null>(null);
   const ed = useEditor({ immediatelyRender: false, editable: false, extensions: [StarterKit, ScriptImage, TaskList, TaskItem], content: docContent }, [docContent]);
   useEffect(() => {
     if (!ed) return;
     setMissing(new Set(comments.filter((c) => !findQuote(ed.state.doc, c.quote, c.occurrence)).map((c) => c.id)));
   }, [ed, comments]);
+  const here = missing ? list.filter((c) => !missing.has(c.id)) : list;
+  const gone = missing ? list.filter((c) => missing.has(c.id)) : [];
+  const goneOpenIds = gone.filter((c) => !c.resolved).map((c) => c.id);
+  // The rewritten ones fold away when there are others to read; they're open when they're all there is.
+  const [goneShown, setGoneShown] = useState<boolean | null>(null);
+  const showGone = goneShown ?? here.length === 0;
+  const [resolvingGone, setResolvingGone] = useState(false);
 
   async function act(fn: () => Promise<{ error?: string }>) {
     const r = await fn();
     if (r.error) toast.error(r.error);
     else router.refresh();
   }
+
+  async function resolveGone() {
+    if (!goneOpenIds.length || resolvingGone) return;
+    const n = goneOpenIds.length;
+    const ok = await confirm({
+      title: `Resolve ${n === 1 ? "this one" : `these ${n}`}?`,
+      description: `${n === 1 ? "It was" : "They were"} left on words that are no longer in ${docName}. Resolved ones stay under "Show resolved", and can be reopened.`,
+      confirmLabel: "Resolve",
+    });
+    if (!ok) return;
+    setResolvingGone(true);
+    const r = await resolveComments(docId, goneOpenIds);
+    setResolvingGone(false);
+    if (r.error !== undefined) return toast.error(r.error);
+    toast.success(r.resolved === 1 ? "Resolved." : `Resolved ${r.resolved}.`);
+    router.refresh();
+  }
+
+  const card = (c: ScriptComment) => {
+    const color = colorOf(c);
+    return (
+      <article
+        key={c.id}
+        onClick={() => onPick(c.id)}
+        className={`rounded-xl border p-3 cursor-pointer transition-colors ${c.resolved ? "opacity-55" : ""} ${c.id === active ? "border-line/40" : "border-line/10 hover:border-line/25"}`}
+        style={{ background: `color-mix(in srgb, ${color} 5%, transparent)`, boxShadow: `inset 2px 0 0 color-mix(in srgb, ${color} 65%, transparent)` }}
+      >
+        <div className="flex items-center gap-2 mb-1.5">
+          <PersonAvatar name={c.author?.name ?? "?"} avatarUrl={c.author?.avatarUrl ?? null} color={c.author?.color ?? "#888"} className="w-6 h-6 text-[10px]" />
+          <span className="text-[12.5px] font-semibold text-ink truncate">{c.author?.name ?? "Someone"}</span>
+          <span className="rounded-md px-1.5 h-5 inline-flex items-center text-[10.5px] font-semibold flex-shrink-0" style={{ background: `color-mix(in srgb, ${color} 14%, transparent)`, color }}>
+            {c.kind === "edit_idea" ? "Editing idea" : "Comment"}
+          </span>
+          <span className="ml-auto text-[11px] text-ink-faint whitespace-nowrap">
+            <Ago iso={c.createdAt} />
+          </span>
+        </div>
+        <div className="text-[12px] text-ink-soft pl-2 mb-1.5 line-clamp-2 border-l-2" style={{ borderColor: `color-mix(in srgb, ${color} 55%, transparent)` }}>
+          “{c.quote}”
+          {missing?.has(c.id) && (
+            <span className="ml-1.5 rounded bg-surface-2 px-1.5 text-[10.5px] font-bold" title="These words were changed or deleted since">
+              text changed
+            </span>
+          )}
+        </div>
+        <CommentBody c={c} people={people} roleColors={roleColors} onSketch={() => onSketch(c)} />
+        {canComment && (
+          <div className="flex items-center gap-1 mt-1.5 -mb-1">
+            <button
+              type="button"
+              onClick={async (e) => {
+                e.stopPropagation();
+                if (!c.resolved && !(await confirmResolve(confirm, c))) return;
+                void act(() => resolveComment(c.id, !c.resolved));
+              }}
+              className="rounded-md px-2 h-7 text-[12px] font-semibold text-ink-soft hover:text-ink hover:bg-surface-2"
+            >
+              {c.resolved ? "Reopen" : "Resolve"}
+            </button>
+            <button
+              type="button"
+              onClick={async (e) => {
+                e.stopPropagation();
+                const idea = c.kind === "edit_idea";
+                const ok = await confirm({
+                  title: idea ? "Delete this editing idea?" : "Delete this comment?",
+                  description: c.sketch ? "Its drawing is deleted too. This can't be undone." : "This can't be undone.",
+                  confirmLabel: "Delete",
+                  danger: true,
+                });
+                if (ok) void act(() => deleteComment(c.id));
+              }}
+              className="rounded-md px-2 h-7 text-[12px] font-semibold text-ink-soft hover:text-red hover:bg-red/10"
+            >
+              Delete
+            </button>
+          </div>
+        )}
+      </article>
+    );
+  };
 
   return (
     <>
@@ -858,9 +963,13 @@ function CommentsChat({
           aria-label="Comments"
         >
           <header className="px-4 pt-3.5 pb-2.5 border-b border-line/10 space-y-2.5">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 min-w-0">
               <h2 className="text-[15px] font-bold">Comments</h2>
-              <span className="text-[12.5px] text-ink-soft">{openCount} open</span>
+              <span className="text-[12.5px] text-ink-soft whitespace-nowrap">{openCount} open</span>
+              {/* Each document has its own comments: say which one these are. */}
+              <span className="min-w-0 truncate rounded-md bg-surface-2 px-1.5 h-5 inline-flex items-center text-[11px] font-semibold text-ink-soft" title={`Comments on ${docName} of #${number} only`}>
+                {docName} · #{number}
+              </span>
               <span className="flex-1" />
               <button type="button" onClick={() => setBig((b) => !b)} aria-label={big ? "Smaller" : "Bigger"} title={big ? "Smaller" : "Big view"} className="w-8 h-8 rounded-lg flex items-center justify-center text-ink-soft hover:text-ink hover:bg-surface-2">
                 <ExpandIcon className="w-4 h-4" />
@@ -892,66 +1001,39 @@ function CommentsChat({
           <div ref={listRef} className="flex-1 min-h-0 overflow-y-auto px-3 py-3 space-y-2.5">
             {!list.length && (
               <p className="text-[13px] text-ink-soft text-center px-6 py-10">
-                {comments.length ? "Nothing here with this filter." : "Select text in the script, then choose Comment or Editing idea."}
+                {comments.length ? "Nothing here with this filter." : `No comments on ${docName} yet. Select text, then choose Comment or Editing idea.`}
               </p>
             )}
-            {list.map((c) => {
-              const color = colorOf(c);
-              return (
-                <article
-                  key={c.id}
-                  onClick={() => onPick(c.id)}
-                  className={`rounded-xl border p-3 cursor-pointer transition-colors ${c.resolved ? "opacity-55" : ""} ${c.id === active ? "border-line/40" : "border-line/10 hover:border-line/25"}`}
-                  style={{ background: `color-mix(in srgb, ${color} 5%, transparent)`, boxShadow: `inset 2px 0 0 color-mix(in srgb, ${color} 65%, transparent)` }}
-                >
-                  <div className="flex items-center gap-2 mb-1.5">
-                    <PersonAvatar name={c.author?.name ?? "?"} avatarUrl={c.author?.avatarUrl ?? null} color={c.author?.color ?? "#888"} className="w-6 h-6 text-[10px]" />
-                    <span className="text-[12.5px] font-semibold text-ink truncate">{c.author?.name ?? "Someone"}</span>
-                    <span
-                      className="rounded-md px-1.5 h-5 inline-flex items-center text-[10.5px] font-semibold flex-shrink-0"
-                      style={{ background: `color-mix(in srgb, ${color} 14%, transparent)`, color }}
-                    >
-                      {c.kind === "edit_idea" ? "Editing idea" : "Comment"}
-                    </span>
-                    <span className="ml-auto text-[11px] text-ink-faint whitespace-nowrap"><Ago iso={c.createdAt} /></span>
-                  </div>
-                  <div className="text-[12px] text-ink-soft pl-2 mb-1.5 line-clamp-2 border-l-2" style={{ borderColor: `color-mix(in srgb, ${color} 55%, transparent)` }}>
-                    “{c.quote}”{missing.has(c.id) && <span className="ml-1.5 rounded bg-surface-2 px-1.5 text-[10.5px] font-bold">text changed</span>}
-                  </div>
-                  <CommentBody c={c} people={people} roleColors={roleColors} onSketch={() => onSketch(c)} />
-                  {canComment && <div className="flex items-center gap-1 mt-1.5 -mb-1">
+            {here.map(card)}
+            {gone.length > 0 && (
+              <div className={here.length ? "pt-2" : ""}>
+                <div className="rounded-xl border border-dashed border-line/20 px-3 py-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setGoneShown(!showGone)}
+                    aria-expanded={showGone}
+                    className="w-full flex items-center gap-2 text-left text-[12.5px] font-semibold text-ink-soft hover:text-ink"
+                  >
+                    <ChevronDownIcon className={`w-3.5 h-3.5 flex-shrink-0 transition-transform duration-200 ${showGone ? "" : "-rotate-90"}`} />
+                    <span className="flex-1">On text that changed since · {gone.length}</span>
+                  </button>
+                  <p className="mt-1 text-[11.5px] text-ink-faint leading-snug">
+                    Left on earlier words of this {docName} that were rewritten or deleted since. Nothing here comes from another script or video.
+                  </p>
+                  {canComment && goneOpenIds.length > 0 && (
                     <button
                       type="button"
-                      onClick={async (e) => {
-                        e.stopPropagation();
-                        if (!c.resolved && !(await confirmResolve(confirm, c))) return;
-                        void act(() => resolveComment(c.id, !c.resolved));
-                      }}
-                      className="rounded-md px-2 h-7 text-[12px] font-semibold text-ink-soft hover:text-ink hover:bg-surface-2"
+                      onClick={() => void resolveGone()}
+                      disabled={resolvingGone}
+                      className="mt-2 rounded-md border border-line/20 px-2.5 h-7 text-[12px] font-semibold text-ink-soft hover:text-ink hover:border-line/40 disabled:opacity-60"
                     >
-                      {c.resolved ? "Reopen" : "Resolve"}
+                      {resolvingGone ? "Resolving…" : goneOpenIds.length === 1 ? "Resolve it" : `Resolve all ${goneOpenIds.length}`}
                     </button>
-                    <button
-                      type="button"
-                      onClick={async (e) => {
-                        e.stopPropagation();
-                        const idea = c.kind === "edit_idea";
-                        const ok = await confirm({
-                          title: idea ? "Delete this editing idea?" : "Delete this comment?",
-                          description: c.sketch ? "Its drawing is deleted too. This can't be undone." : "This can't be undone.",
-                          confirmLabel: "Delete",
-                          danger: true,
-                        });
-                        if (ok) void act(() => deleteComment(c.id));
-                      }}
-                      className="rounded-md px-2 h-7 text-[12px] font-semibold text-ink-soft hover:text-red hover:bg-red/10"
-                    >
-                      Delete
-                    </button>
-                  </div>}
-                </article>
-              );
-            })}
+                  )}
+                </div>
+                {showGone && <div className="mt-2.5 space-y-2.5 animate-[fadein_.2s_ease]">{gone.map(card)}</div>}
+              </div>
+            )}
           </div>
           <footer className="px-4 py-2.5 border-t border-line/10 flex items-center gap-2 flex-wrap text-[12px] text-ink-soft pb-[calc(env(safe-area-inset-bottom)+0.625rem)]">
             <span className="flex-1 min-w-[8rem]">{canComment ? "Select text, then Enter to add." : "Only this video's scripters and its Review and Staging people can comment."}</span>

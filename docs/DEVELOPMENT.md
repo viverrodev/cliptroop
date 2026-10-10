@@ -125,6 +125,17 @@ the page is live, or React throws that part away (production error #418).
   (`components/ui/pending-nav.tsx`).
 - Images: upload through `compressImage()` with an `IMAGE_PRESETS` entry
   and `UPLOAD_CACHE_CONTROL`; render with `loading="lazy" decoding="async"`.
+- Code that only one tab, dialog or widget needs is loaded with
+  `next/dynamic` from a `"use client"` file (in a server component it does
+  NOT split: both sides end up in the page's chunk). Examples:
+  `app/(dashboard)/objectives/views.tsx`, `app/(dashboard)/team/lazy-tabs.tsx`,
+  the dashboard widgets in `modules/dashboard/components/studio.tsx`. A big
+  library used on one action (tus uploads) is `await import()`ed there.
+- Dashboard widgets: a new one gets its `dynamic()` line and its `PRELOAD`
+  entry in `studio.tsx` (the board's widgets start downloading while the page
+  hydrates; Customize fetches the rest for the library). Each renders inside
+  `WidgetBoundary`, so one failing widget shows its own Try again instead of
+  taking the dashboard down.
 
 ## UI conventions
 
@@ -227,8 +238,9 @@ whose `tasks_visibility` (0076: own / masters / team) allows it
 (`shared_task_team_ids()`). So queries for "my tasks" must filter by
 `user_id` themselves (listMyTasks, listDone do).
 
-**Daily word.** `lib/word/` (answers and valid guesses are server-only;
-`score.ts` is shared). Plays (`daily_word_plays`, 0077) are written only by the
+**Daily word.** `lib/word/` (answers are server-only; the list of valid
+guesses, `words.ts`, is shared since 1.15.0 so the board can refuse a
+non-word at once; `score.ts` is shared). Plays (`daily_word_plays`, 0077) are written only by the
 server after checking a guess (`modules/word/lib/state.ts`); people read their
 own; `daily_word_team()` gives teammates' tries. The day is the team's time
 zone. Finished plays count on the contribution grid (listDone).
@@ -265,6 +277,57 @@ reload through `loadObjectivesBoard()`; `ObjectiveCelebrations` (app shell)
 throws the confetti for new wins and for the ones missed in the last two
 days. A new metric = an entry in `METRICS` and its case in `hitsFor()` (with
 a test); the database only checks the id's shape, so no migration.
+A goal only judges the time since it was set (1.15.0): periods before its
+creation day are `before`, a finished period with no platform numbers is
+`nodata`, and streaks, bests and "reached N of M" come from `statsOf()` over
+the counted periods only (`firstCounted()`, `compute.ts`). The editor's
+preview (`whatIf`) still shows how the target would have gone.
+
+**Whose numbers (0079).** Analytics only ever shows the accounts connected
+now. `analytics_syncs.account_ref` says whose numbers a platform's rows are
+(the platform's own id, or `name:<name>` for rows from before 0079) and
+`account_since` when that account was connected. `adoptAccount()`
+(`modules/analytics/lib/accounts.ts`) runs on every connect, reconnect and
+Facebook Page pick: the same account keeps its numbers, a different one
+purges the old rows (`purgeNumbers`, every table in `NUMBER_TABLES`) and the
+next sync backfills. Every reader of the analytics tables filters through
+`numbersVisibility()` (`visibleRows()`, `inAccountTime()` for our own posts),
+so a disconnected account's numbers leave without being deleted and come
+back if the same account is connected again. Add any new analytics table to
+`NUMBER_TABLES` and filter its readers the same way.
+`analytics_claim_legacy()` (service role only) cleaned the rows mixed before.
+
+**Views on a day (0079).** `analytics_content_days` keeps each video's views
+per day: YouTube's real per-day numbers (`source = 'daily'`, one report per
+day, `syncYouTubeVideoDays`) and, for the others, the running totals of each
+morning's copy (`'total'`), whose differences give the day.
+`getViewsDay()` builds the Views per day dialog; `loadViewsDay()` asks YouTube
+for a day the copies missed (at most every 10 minutes per team and day).
+
+**Projections (0080).** `projections` (masters write; immutable once set:
+metric, scope, start day and value, the `baseline` for Compare) and
+`projection_points` (one value per day, written only by the service role).
+Money metrics (`money`, generated) are readable only with
+`can_view_revenue()`. Code in `modules/projections/lib/`: `metrics.ts` (every
+metric, its units and words), `compute.ts` (`valueAt()` from the rows, the
+trend, `assess()`: pure and tested), `data.ts` (loads only connected
+accounts' rows), `board.ts`, `record.ts` (today's points, reached and ended
+once each, notifications `projection_reached` / `projection_ended`). Points
+are recorded by the morning analytics job (all teams) and when the page is
+opened before it ran (`queueRecordIfDue`). A new metric = an entry in
+`PROJ_METRICS` and its case in `valueAt()` (with a test); no migration.
+
+**Daily word guesses (0079).** The server scores a guess against today's word
+(the browser never knows it) and saves it in one step with
+`daily_word_guess()` (service role only: appends under a row lock, refuses a
+repeat or a seventh try). The browser checks the word list itself
+(`words.ts`, loaded after the page is up) and starts flipping the tiles at
+once; the colours land when the answer comes.
+
+**Script comments.** Each belongs to one document (`script_comments.script_id`:
+one short's or long video's script). Comments whose quoted words were since
+rewritten or deleted are grouped under "On text that changed since", with
+Resolve all (`resolveComments()`).
 
 **Who may change what.** Dates (Calendar moves, long video dates): masters and
 schedulers, enforced in the database (shorts' functions, 0073 for long videos).

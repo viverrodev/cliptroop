@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { CloseIcon, DownloadIcon, ExternalIcon, LockIcon, PlusIcon } from "@/components/ui/icons";
 import { useToast } from "@/components/ui/toast-provider";
@@ -18,6 +19,9 @@ import { BarList, ChartCard, fmtCompact, fmtInt, Legend, LineChart, StackedColum
 import { countryName } from "./world-map";
 import { AudienceMapView, MAP_MODES, sourcesOf, type MapMode, type MapView } from "./audience-map";
 import { startNavProgress } from "@/components/ui/nav-progress";
+
+// Only loaded when a day on the Views chart is clicked.
+const DayVideos = dynamic(() => import("./day-videos").then((m) => m.DayVideos), { ssr: false });
 
 type Data =
   | { tab: "production"; production: Production }
@@ -294,7 +298,7 @@ export function AnalyticsView({
 
       <div className={`transition-opacity duration-200 ${navigating ? "opacity-50" : ""}`}>
         {data.tab === "production" && <ProductionTab p={data.production} compare={compare} w={w} />}
-        {data.tab === "audience" && <AudienceTab a={data.audience} compare={compare} picked={pickedIn(data.audience, picked)} setPicked={setPicked} />}
+        {data.tab === "audience" && <AudienceTab teamId={teamId} a={data.audience} compare={compare} picked={pickedIn(data.audience, picked)} setPicked={setPicked} />}
         {data.tab === "content" && <ContentTab items={data.content.items} status={data.content.status} />}
         {data.tab === "revenue" && <RevenueTab r={data.revenue} compare={compare} teamId={teamId} />}
       </div>
@@ -538,6 +542,29 @@ function PlatformFilter({ a, picked, setPicked }: { a: Audience; picked: P[]; se
   );
 }
 
+/**
+ * After a platform's account was replaced (another channel, account or
+ * Page): whose numbers these are. The old account's were removed then, so
+ * nothing here ever mixes the two.
+ */
+function AccountNote({ status, className = "" }: { status: PlatformStatus[]; className?: string }) {
+  const recent = status.filter((s) => s.connected && s.since && Date.parse(s.since) > Date.now() - 180 * 86_400_000);
+  if (!recent.length) return null;
+  return (
+    <div className={`flex flex-col gap-1 text-[12px] text-ink-faint ${className}`}>
+      {recent.map((s) => (
+        <p key={s.platform} className="flex items-start gap-1.5">
+          <PlatformIcon platform={s.platform} className="w-4 h-4 rounded mt-px flex-shrink-0" />
+          <span>
+            {PLATFORM[s.platform].name} shows {s.account ? <b className="font-semibold text-ink-soft">{s.account}</b> : "the connected account"} only, connected on {niceDay(s.since!.slice(0, 10))}. The
+            previous account&rsquo;s numbers and posts were removed.
+          </span>
+        </p>
+      ))}
+    </div>
+  );
+}
+
 function SetupCard({ status }: { status: PlatformStatus[] }) {
   const connected = status.some((s) => s.connected);
   return (
@@ -562,10 +589,13 @@ function SetupCard({ status }: { status: PlatformStatus[] }) {
   );
 }
 
-function AudienceTab({ a, compare, picked, setPicked }: { a: Audience; compare: boolean; picked: P[]; setPicked: (v: P[] | null) => void }) {
+function AudienceTab({ teamId, a, compare, picked, setPicked }: { teamId: string; a: Audience; compare: boolean; picked: P[]; setPicked: (v: P[] | null) => void }) {
   const ready = a.status.some((s) => s.connected && s.statsReady);
   const dayLabels = a.days.map((d) => niceDay(d));
   const [mode, setMode] = useState<"platform" | "total">("platform");
+  // A day clicked on the Views chart: its videos.
+  const [dayAt, setDayAt] = useState<number | null>(null);
+  const closeDay = useCallback(() => setDayAt(null), []);
   if (!ready || !a.hasData)
     return (
       <>
@@ -593,6 +623,7 @@ function AudienceTab({ a, compare, picked, setPicked }: { a: Audience; compare: 
   return (
     <div className="space-y-5">
       <PlatformFilter a={a} picked={picked} setPicked={setPicked} />
+      <AccountNote status={a.status} className="-mt-3" />
       {ttWaiting && (
         <p className="rounded-xl border border-line/15 bg-surface px-4 py-3 text-[13px] text-ink-soft flex items-start gap-3">
           <PlatformIcon platform="tiktok" className="w-5 h-5 rounded mt-0.5 flex-shrink-0" />
@@ -618,9 +649,9 @@ function AudienceTab({ a, compare, picked, setPicked }: { a: Audience; compare: 
       <ChartCard
         title="Views per day"
         sub={
-          together
+          (together
             ? `${names}${compare ? ` · dashed: the ${a.days.length} days before` : ""}`
-            : `By platform${compare ? " · switch to Together to compare with before" : ""}`
+            : `By platform${compare ? " · switch to Together to compare with before" : ""}`) + " · click a day for its videos"
         }
         right={
           <div className="flex items-center gap-4 flex-wrap justify-end">
@@ -664,9 +695,11 @@ function AudienceTab({ a, compare, picked, setPicked }: { a: Audience; compare: 
               : withViews.map((p) => ({ key: p, label: PLATFORM[p].name, color: PLATFORM[p].color, values: pp[p].views }))
           }
           previous={together && compare ? { label: "Before", values: prevViews } : null}
+          onPick={setDayAt}
         />
         )}
       </ChartCard>
+      {dayAt !== null && <DayVideos teamId={teamId} days={a.days} index={dayAt} platforms={picked} onClose={closeDay} />}
 
       <div className="grid gap-5 lg:grid-cols-2">
         <ChartCard title="Views by platform" sub="This range">
@@ -902,6 +935,7 @@ function ContentTab({ items, status }: { items: ContentItem[]; status: PlatformS
   return (
     <div className="space-y-4">
       <ContentFilter items={items} status={status} platform={platform} setPlatform={setPlatform} />
+      <AccountNote status={platform === "all" ? status : status.filter((s) => s.platform === platform)} />
       {list.length ? (
         <div className="rounded-2xl border border-line/10 bg-surface overflow-x-auto">
           <table className="w-full min-w-[720px] text-[13px]">
@@ -973,7 +1007,7 @@ function ContentTab({ items, status }: { items: ContentItem[]; status: PlatformS
         </p>
       )}
       <p className="text-[12px] text-ink-faint">
-        Numbers are each video&rsquo;s totals as of the last sync. YouTube: the latest 50 uploads · Instagram: the latest 25 posts · TikTok: public videos · Facebook: the latest 25 Page posts and Reels. Shorts the team posted show here too, with &ldquo;–&rdquo; until the platform shares their numbers.
+        Numbers are each video&rsquo;s totals as of the last sync. YouTube: the latest 50 uploads · Instagram: the latest 25 posts · TikTok: public videos · Facebook: the latest 25 Page posts and Reels. Shorts the team posted show here too, with &ldquo;–&rdquo; until the platform shares their numbers. Only the accounts connected now are listed: posts on a disconnected or earlier account never are.
       </p>
     </div>
   );

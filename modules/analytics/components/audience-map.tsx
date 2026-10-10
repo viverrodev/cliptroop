@@ -3,8 +3,11 @@
 import { APP_NAME } from "@/lib/brand";
 import { useState } from "react";
 import type { Audience } from "../lib/queries";
+import { MAP_MODES, type MapMode, type MapView } from "../lib/map-modes";
 import { WorldMap } from "./world-map";
 import dynamic from "next/dynamic";
+
+export { MAP_MODES, type MapMode, type MapView };
 
 // The 3D globe (drawing + turning + zoom) is only downloaded when it's shown.
 const Globe = dynamic(() => import("./globe").then((m) => m.Globe), {
@@ -24,23 +27,12 @@ const Globe = dynamic(() => import("./globe").then((m) => m.Globe), {
  * widget use the same layers).
  */
 
-export type MapMode = "all" | "views" | "watch" | "instagram" | "tiktok" | "facebook";
-export type MapView = "map" | "globe";
 type Row = { code: string; value: number };
 type Source = { id: Exclude<MapMode, "all">; name: string; what: string; color: string; rows: Row[]; format: (n: number) => string };
 
 const int = (n: number) => Math.round(n).toLocaleString("en-US");
 const hours = (n: number) => `${int(n)} h`;
 const pct = (n: number) => `${(n * 100).toFixed(n >= 0.1 ? 0 : 1)}%`;
-
-export const MAP_MODES: { id: MapMode; label: string }[] = [
-  { id: "all", label: "All platforms" },
-  { id: "views", label: "YouTube views" },
-  { id: "watch", label: "YouTube watch time" },
-  { id: "instagram", label: "Instagram followers" },
-  { id: "tiktok", label: "TikTok followers" },
-  { id: "facebook", label: "Facebook followers" },
-];
 
 type MapData = Pick<Audience, "countries" | "followerCountries">;
 

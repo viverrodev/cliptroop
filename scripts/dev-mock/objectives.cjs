@@ -158,8 +158,9 @@ function objectivesFixtures({ TEAM, U, people, members, base }) {
     { id: O(1), title: "Shorts every week", metric: "shorts_posted", period: "week", target: 10, filters: {}, color: "blue" },
     { id: O(2), title: "Instagram-only reels", metric: "shorts_posted", period: "week", target: 3, filters: { platforms: ["instagram"], only: true }, color: "magenta" },
     { id: O(3), title: "TikTok-only shorts", metric: "shorts_posted", period: "week", target: 4, filters: { platforms: ["tiktok"], only: true }, color: "aqua" },
-    { id: O(4), title: "Long videos", metric: "longs_posted", period: "month", target: 3, filters: {}, color: "orange" },
-    { id: O(5), title: "YouTube views", metric: "views", period: "week", target: 100000, filters: { platforms: ["youtube"] }, color: "violet" },
+    // Set later than the others: the months / weeks before show as "Before this goal" (1.15.0).
+    { id: O(4), title: "Long videos", metric: "longs_posted", period: "month", target: 3, filters: {}, color: "orange", created_at: localIso(addDays(today, -40), 10) },
+    { id: O(5), title: "YouTube views", metric: "views", period: "week", target: 100000, filters: { platforms: ["youtube"] }, color: "violet", created_at: localIso(addDays(today, -17), 10) },
     { id: O(6), title: "Shorts edited by Maria", metric: "shorts_edited", period: "week", target: 6, filters: { member: members[1].id }, color: "green" },
     { id: O(7), title: "Two shorts a day", metric: "shorts_posted", period: "day", target: 2, filters: {}, color: "yellow" },
     { id: O(8), title: "New followers", metric: "followers", period: "week", target: 2500, filters: {}, color: "red", paused_at: localIso(addDays(today, -10), 12) },

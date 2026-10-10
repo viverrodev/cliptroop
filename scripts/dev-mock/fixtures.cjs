@@ -107,6 +107,8 @@ const shorts = SHORT_TITLES.map((title, i) => {
 });
 // ---- Objectives (0078): MOCK_OBJECTIVES=1, around the real "now" (scripts/dev-mock/objectives.cjs).
 const OBJ = process.env.MOCK_OBJECTIVES ? require("./objectives.cjs").objectivesFixtures({ TEAM, U, people, members, base: shorts }) : null;
+// MOCK_PROJECTIONS=1 (with MOCK_OBJECTIVES=1): long-term targets with their history (0080).
+const PROJ = process.env.MOCK_PROJECTIONS ? require("./projections.cjs").projectionsFixtures({ TEAM, U }) : null;
 // ---- Long videos
 const LONG = [
   ["The real cost of living in Bucharest", "publish", 6, "Documentary"],
@@ -166,9 +168,23 @@ for (let d = OBJ ? -90 : -60; d <= LAST_DAY; d++) {
   if (d >= -28 && d <= -1) for (const [c, share] of CC) countriesRows.push({ team_id: TEAM, platform: "youtube", metric: "views", day: dd, country: c, value: Math.round(yt * share * (0.85 + rnd() * 0.3)), watch_minutes: Math.round(yt * share * 0.5) });
 }
 const IGC = [["RO", 38100], ["MD", 7200], ["IT", 4900], ["US", 3100], ["ES", 2400], ["DE", 1900]].map(([c, v]) => ({ team_id: TEAM, platform: "instagram", metric: "followers", day: day(-1), country: c, value: v }));
-const contentRows = shorts.filter((x) => x.stage === "posted").flatMap((x, i) => ["youtube", "instagram", "tiktok"].map((pl, k) => ({ team_id: TEAM, platform: pl, external_id: `${pl}-${i}`, kind: "short", title: x.title, url: "https://example.com", thumbnail_url: null, published_at: at(-3 + i), duration_seconds: 45, views: Math.round(20000 + 90000 * rnd()), likes: Math.round(4000 * rnd()), comments: Math.round(300 * rnd()), shares: Math.round(400 * rnd()), saves: null, reach: null, short_id: x.id, project_id: null, short_videos: { entry_number: x.entry_number }, long_video_projects: null })));
-contentRows.push({ team_id: TEAM, platform: "youtube", external_id: "yt-long-1", kind: "long", title: "Inside a 400-year-old salt mine", url: "https://example.com", thumbnail_url: null, published_at: at(-9), duration_seconds: 1240, views: 214000, likes: 9800, comments: 640, shares: 410, short_id: null, project_id: longs[5].id, short_videos: null, long_video_projects: { entry_number: 46 } });
+const contentRows = shorts.filter((x) => x.stage === "posted").flatMap((x, i) => ["youtube", "instagram", "tiktok"].map((pl, k) => ({ team_id: TEAM, platform: pl, external_id: `${pl}-${i}`, kind: "short", title: x.title, url: "https://example.com", thumbnail_url: null, published_at: at(-3 + i), duration_seconds: 45, views: Math.round(20000 + 90000 * rnd()), likes: Math.round(4000 * rnd()), comments: Math.round(300 * rnd()), shares: Math.round(400 * rnd()), saves: null, reach: null, short_id: x.id, project_id: null, short_videos: { entry_number: x.entry_number }, long_video_projects: null,
+  // Per-video analytics (0079): YouTube's watch numbers, Instagram's Reels skip rate.
+  ...(pl === "youtube" ? { avg_view_seconds: Math.round(24 + 14 * rnd()), avg_view_pct: Math.round((70 + 30 * rnd()) * 10) / 10, engaged_views: null, subscribers_gained: Math.round(30 + 90 * rnd()) } : pl === "instagram" ? { skip_rate: Math.round((22 + 14 * rnd()) * 10) / 10, avg_view_seconds: Math.round(8 + 6 * rnd()) } : {}) })));
+contentRows.push({ team_id: TEAM, platform: "youtube", external_id: "yt-long-1", kind: "long", title: "Inside a 400-year-old salt mine", url: "https://example.com", thumbnail_url: null, published_at: at(-9), duration_seconds: 1240, views: 214000, likes: 9800, comments: 640, shares: 410, short_id: null, project_id: longs[5].id, short_videos: null, long_video_projects: { entry_number: 46 }, avg_view_seconds: 506, avg_view_pct: 42.6, subscribers_gained: 1840 });
 contentRows.sort((a, b) => b.views - a.views);
+// Each video's views per day (0079): YouTube's own number per day, the others' running totals per morning copy.
+const contentDays = [];
+// The last day with numbers (yesterday; with MOCK_OBJECTIVES, the real yesterday).
+const TODAY_N = OBJ ? LAST_DAY + 1 : 0;
+for (let d = 1; d <= 28; d++)
+  for (const c of contentRows.filter((r) => r.platform === "youtube" && r.published_at.slice(0, 10) <= day(TODAY_N - d))) {
+    const v = Math.round((c.views / 30) * (0.35 + rnd()) * (c.kind === "long" ? 1.6 : 1));
+    contentDays.push({ team_id: TEAM, platform: "youtube", external_id: c.external_id, day: day(TODAY_N - d), source: "daily", views: v, watch_minutes: Math.round(v * (c.kind === "long" ? 4.1 : 0.35)), likes: Math.round(v * 0.04), comments: Math.round(v * 0.004), shares: Math.round(v * 0.003), updated_at: at(TODAY_N, 8) });
+  }
+for (let d = 0; d <= 6; d++)
+  for (const c of contentRows.filter((r) => r.platform !== "youtube" && r.published_at.slice(0, 10) <= day(TODAY_N - d)))
+    contentDays.push({ team_id: TEAM, platform: c.platform, external_id: c.external_id, day: day(TODAY_N - d), source: "total", views: Math.round(c.views * (1 - d * (0.05 + 0.04 * rnd()))), likes: Math.round(c.likes * (1 - d * 0.05)), comments: Math.round(c.comments * (1 - d * 0.04)), shares: Math.round(c.shares * (1 - d * 0.05)), updated_at: at(TODAY_N - d, 8) });
 const revenue = [];
 for (let d = -400; d <= -1; d++) {
   const total = Math.round((30 + 12 * Math.sin(d / 9) + 10 * rnd()) * 100) / 100;
@@ -252,7 +268,13 @@ if (process.env.MOCK_POSTS) {
   // Older ones, so "Published recently" has more than one page.
   for (let i = 6; i < 16; i++) ["youtube", "tiktok", i % 2 ? "instagram" : "facebook"].forEach((pl, k) => post(i, pl, "published", -24 * (i - 3) - k));
 }
-const syncs = ["youtube", "instagram", "tiktok", "facebook"].map((pl) => ({ team_id: TEAM, platform: pl, last_run_at: process.env.MOCK_STALE ? new Date(Date.now() - 50 * 3600e3).toISOString() : at(0, 8), last_ok_at: at(0, 8), last_error: null, backfilled: true, revenue_note: pl === "facebook" && process.env.MOCK_FB_NO_EARNINGS ? "Facebook shared no earnings: the Page isn't in Content Monetization (or hasn't earned yet)." : null }));
+const syncs = ["youtube", "instagram", "tiktok", "facebook"].map((pl) => ({
+  team_id: TEAM, platform: pl, last_run_at: process.env.MOCK_STALE ? new Date(Date.now() - 50 * 3600e3).toISOString() : at(0, 8), last_ok_at: at(0, 8), last_error: null, backfilled: true,
+  revenue_note: pl === "facebook" && process.env.MOCK_FB_NO_EARNINGS ? "Facebook shared no earnings: the Page isn't in Content Monetization (or hasn't earned yet)." : null,
+  // Whose numbers (0079). MOCK_SWITCHED=1: the Facebook Page was replaced 5 days ago.
+  account_ref: pl === "facebook" ? "123456789" : "ext-" + pl,
+  account_since: pl === "facebook" && process.env.MOCK_SWITCHED ? at(-5, 14) : null,
+}));
 // MOCK_FB_ANALYTICS_ONLY=1: a Facebook Page connected before posting (no pages_manage_posts).
 const STATS = {
   youtube: ["https://www.googleapis.com/auth/yt-analytics.readonly", "https://www.googleapis.com/auth/yt-analytics-monetary.readonly"],
@@ -420,11 +442,24 @@ module.exports = {
     long_video_posts: OBJ ? OBJ.longPosts : [],
     long_video_scripters: (OBJ ? [...longs, ...OBJ.longs] : longs).map((l) => ({ project_id: l.id, team_member_id: members[1].id })),
     objectives: OBJ ? OBJ.objectives : [],
+    projections: PROJ ? PROJ.projections : [],
+    projection_points: PROJ ? PROJ.projection_points : [],
     objective_targets: OBJ ? OBJ.targets : [],
     objective_periods: OBJ ? OBJ.periods : [],
     package_entries: packageEntries,
     scripts: scriptDocs,
-    script_comments: [],
+    // MOCK_COMMENTS=1: comments on short #231's Script, two of them on words rewritten since.
+    script_comments: process.env.MOCK_COMMENTS
+      ? [
+          ["cm000000-0000-4000-8000-000000000001", "comment", "three stalls, three prices", 0, "Can we show the prices on screen as they say them?", U[1], at(-2, 11)],
+          ["cm000000-0000-4000-8000-000000000002", "edit_idea", "follow for part two", 0, "Freeze frame + the part two title card here", U[2], at(-1, 15)],
+          ["cm000000-0000-4000-8000-000000000003", "comment", "the cheapest one tasted the best", 0, "Love this line, keep it", U[0], at(-4, 10)],
+          ["cm000000-0000-4000-8000-000000000004", "edit_idea", "slow zoom on the grill", 0, "Use the B-roll from Tuesday", U[2], at(-4, 12)],
+        ].map(([id, kind, quote, occurrence, body, author, created]) => ({
+          id, kind, quote, occurrence, body, created_at: created, resolved_at: null, author_id: author, sketch_path: null, sketch_w: null, sketch_h: null, script_id: "dd000000-0000-4000-8000-000000000001", team_id: TEAM,
+          author: { username: people[U.indexOf(author)]?.username ?? null, full_name: people[U.indexOf(author)]?.full_name ?? null, email: null, avatar_url: null },
+        }))
+      : [],
     script_doc_people: [{ script_id: "dd000000-0000-4000-8000-000000000002", team_member_id: members[2].id, team_id: TEAM }],
     team_script_people: [{ team_id: TEAM, step: "review", team_member_id: members[0].id }, { team_id: TEAM, step: "staging", team_member_id: members[0].id }, { team_id: TEAM, step: "staging", team_member_id: members[3].id }],
     script_handoffs: [
@@ -440,6 +475,7 @@ module.exports = {
     analytics_daily: daily,
     analytics_countries: [...countriesRows, ...IGC, ...[["RO", 2400], ["MD", 310], ["IT", 260], ["ES", 190], ["DE", 150], ["GB", 120], ["FR", 90], ["US", 80]].map(([country, value]) => ({ team_id: TEAM, platform: "facebook", metric: "followers", day: day(0), country, value, watch_minutes: null }))],
     analytics_content: contentRows,
+    analytics_content_days: contentDays,
     analytics_syncs: syncs,
     analytics_revenue_daily: revenue,
     revenue_entries: incomes,

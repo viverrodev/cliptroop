@@ -1,8 +1,13 @@
 "use client";
 
+import { useState, useTransition } from "react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { Mascot } from "@/components/ui/mascot";
-import { CheckIcon } from "@/components/ui/icons";
+import { CheckIcon, PlusIcon } from "@/components/ui/icons";
+import { useToast } from "@/components/ui/toast-provider";
+import { objectiveEditorPeople } from "@/app/(dashboard)/objectives/actions";
+import type { TeamPerson } from "@/modules/short-videos/lib/queries";
 import { useLiveBoard } from "@/modules/objectives/components/use-live-board";
 import { Meter, Rings, StatusPill, useWhen, type Ring } from "@/modules/objectives/components/parts";
 import { progressWords } from "@/modules/objectives/components/objective-card";
@@ -20,6 +25,39 @@ import { useBox } from "./widget-box";
  */
 
 export type ObjectivesWidgetSettings = { show?: "all" | PeriodKind; ids?: string[] };
+
+// The editor only loads when a master opens it from the widget.
+const ObjectiveEditor = dynamic(() => import("@/modules/objectives/components/objective-editor").then((m) => m.ObjectiveEditor), { ssr: false });
+
+/**
+ * Masters set a new objective right from the dashboard: the same editor as
+ * Team settings, in a window over the dashboard. The ring fills in as soon
+ * as it's saved (realtime, or the reload when the window closes).
+ */
+function useNewObjective(teamId: string, used: string[], onDone: () => void) {
+  const toast = useToast();
+  const [people, setPeople] = useState<TeamPerson[] | null>(null);
+  const [opening, start] = useTransition();
+  const open = () =>
+    start(async () => {
+      const r = await objectiveEditorPeople(teamId);
+      if (r.error !== undefined) return void toast.error(r.error);
+      setPeople(r.people);
+    });
+  const editor = people ? (
+    <ObjectiveEditor
+      open
+      onClose={() => {
+        setPeople(null);
+        onDone();
+      }}
+      teamId={teamId}
+      people={people}
+      usedColors={used}
+    />
+  ) : null;
+  return { open, opening, editor };
+}
 
 const daysWord = (kind: PeriodKind, n: number) => {
   const s = timeLeft(kind, n);
@@ -72,7 +110,22 @@ function Row({ o, wide }: { o: ObjectiveView; wide: boolean }) {
 export function ObjectivesWidget({ teamId, settings }: { teamId: string; settings?: Record<string, unknown> }) {
   const box = useBox();
   const when = useWhen();
-  const { board, error } = useLiveBoard(teamId, "widget");
+  const { board, error, reload } = useLiveBoard(teamId, "widget");
+  const add = useNewObjective(teamId, board?.objectives.map((o) => o.color) ?? [], () => void reload());
+  const canAdd = !!board?.canEdit && board.ready;
+  // "+": over the widget's title row, beside its settings button.
+  const plus = canAdd ? (
+    <button
+      type="button"
+      onClick={add.open}
+      disabled={add.opening}
+      aria-label="New objective"
+      title="New objective"
+      className="absolute top-[10px] right-9 z-10 w-6 h-6 rounded-md flex items-center justify-center text-ink-faint hover:text-ink hover:bg-surface-2 opacity-0 group-hover/card:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-70 transition-opacity disabled:opacity-40"
+    >
+      <PlusIcon className="w-3.5 h-3.5" strokeWidth={2.5} />
+    </button>
+  ) : null;
 
   if (!board && !error)
     return (
@@ -96,11 +149,21 @@ export function ObjectivesWidget({ teamId, settings }: { teamId: string; setting
       <div className="h-full flex items-center gap-3">
         {box.w >= 230 && box.h >= 80 && <Mascot mood="idle" size={Math.max(44, Math.min(78, box.h - 20))} />}
         <div className="min-w-0">
-          <p className="text-[12.5px] text-ink-soft leading-snug">{board.objectives.length ? "Nothing to show with these settings." : "No objectives yet. Masters set the team's goals in Team settings."}</p>
-          <Link href={board.objectives.length ? "/objectives" : "/team?tab=objectives"} className="text-[12.5px] font-semibold text-amber hover:brightness-110">
-            {board.objectives.length ? "See them all" : "Set objectives"} →
-          </Link>
+          <p className="text-[12.5px] text-ink-soft leading-snug">
+            {board.objectives.length ? "Nothing to show with these settings." : canAdd ? "No objectives yet. Set the team's first goal here." : "No objectives yet. Masters set the team's goals."}
+          </p>
+          {!board.objectives.length && canAdd ? (
+            <button type="button" onClick={add.open} disabled={add.opening} className="mt-1 inline-flex items-center gap-1 rounded-md bg-amber text-white px-2.5 h-7 text-[12px] font-bold hover:brightness-110 disabled:opacity-60">
+              <PlusIcon className="w-3 h-3" strokeWidth={2.5} />
+              New objective
+            </button>
+          ) : (
+            <Link href="/objectives" className="text-[12.5px] font-semibold text-amber hover:brightness-110">
+              See {board.objectives.length ? "them all" : "Objectives"} →
+            </Link>
+          )}
         </div>
+        {add.editor}
       </div>
     );
 
@@ -152,11 +215,15 @@ export function ObjectivesWidget({ teamId, settings }: { teamId: string; setting
 
   if (tiny)
     return (
-      <Link href="/objectives" className="h-full flex items-center justify-center rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber" aria-label="Objectives">
-        <Rings rings={rings} size={ringSize}>
-          {center}
-        </Rings>
-      </Link>
+      <>
+        <Link href="/objectives" className="h-full flex items-center justify-center rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber" aria-label="Objectives">
+          <Rings rings={rings} size={ringSize}>
+            {center}
+          </Rings>
+        </Link>
+        {plus}
+        {add.editor}
+      </>
     );
 
   const wide = W >= 470 && !stacked && !strip;
@@ -199,6 +266,8 @@ export function ObjectivesWidget({ teamId, settings }: { teamId: string; setting
           </Link>
         )}
       </div>
+      {plus}
+      {add.editor}
     </div>
   );
 }

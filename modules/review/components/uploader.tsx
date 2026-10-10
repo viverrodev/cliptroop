@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Upload as TusUpload } from "tus-js-client";
+// The upload library itself is downloaded with the first upload, not with the page.
+import type { Upload as TusUpload } from "tus-js-client";
 import { createClient } from "@/lib/supabase/client";
 import { registerVersion } from "@/app/(dashboard)/shorts/[id]/review/actions";
 import { useToast } from "@/components/ui/toast-provider";
@@ -83,12 +84,20 @@ export function VersionUploader({
       return;
     }
 
-    const meta = await readMeta(file);
+    let meta: Awaited<ReturnType<typeof readMeta>>;
+    let Upload: typeof TusUpload;
+    try {
+      // The file's details and the upload library, together.
+      [meta, { Upload }] = await Promise.all([readMeta(file), import("tus-js-client")]);
+    } catch {
+      toast.error("The uploader didn't load. Check your connection and try again.");
+      return;
+    }
     const ext = (file.name.split(".").pop() || "mp4").toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 5) || "mp4";
     const path = `${teamId}/${shortId}/${crypto.randomUUID()}.${ext}`;
     setProgress({ sent: 0, total: file.size, name: file.name });
 
-    const upload = new TusUpload(file, {
+    const upload = new Upload(file, {
       endpoint: `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/upload/resumable`,
       retryDelays: [0, 2000, 5000, 10000, 20000, 30000],
       headers: { authorization: `Bearer ${session.access_token}`, "x-upsert": "false" },

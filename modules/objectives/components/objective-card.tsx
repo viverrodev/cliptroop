@@ -6,7 +6,7 @@ import { useCountUp } from "@/components/ui/count-up";
 import { colorVar, formatAmount, unitFor } from "../lib/metrics";
 import { THIS, daysBetween, timeLeft, type PeriodKind } from "../lib/periods";
 import type { ObjectiveView, PersonLite } from "../lib/types";
-import { HistoryBars, Meter, ObjectiveIcon, PeopleStack, StatusPill, useWhen } from "./parts";
+import { HistoryBars, Meter, ObjectiveIcon, PeopleStack, StatusPill, unjudged, useWhen } from "./parts";
 
 /** "by Sunday", "by Oct 31", "by tonight". */
 export function byWhen(kind: PeriodKind, end: string) {
@@ -60,7 +60,8 @@ export function ObjectiveCard({ o, people, audienceReady, onOpen, wide = false }
     }
     was.current = reached;
   }, [reached]);
-  const past = o.history.slice(0, -1).filter((p) => p.target > 0);
+  // Only periods since the goal was set (with numbers) count toward "reached X of Y".
+  const past = o.history.slice(0, -1).filter((p) => p.target > 0 && !unjudged(p));
   const forecast = !reached && c.forecast !== null && c.value > 0 && c.target > 0 && c.status !== "off" ? `At this pace: about ${formatAmount(o.metric, c.forecast)} ${byWhen(o.period, c.end)}.` : null;
   const unit = unitFor(o.metric, c.target || o.target, o.filters);
 

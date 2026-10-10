@@ -99,7 +99,12 @@ export type Hit = {
 // What the screens get
 // ---------------------------------------------------------------------------
 
-export type Status = "reached" | "ahead" | "on_track" | "behind" | "off" | "missed" | "upcoming";
+/**
+ * "before": a period from before the objective was set (shown, never judged).
+ * "nodata": a finished period with no platform numbers at all (no account
+ * connected then): not counted either way.
+ */
+export type Status = "reached" | "ahead" | "on_track" | "behind" | "off" | "missed" | "upcoming" | "before" | "nodata";
 
 export type PersonLite = { memberId: string; userId: string | null; name: string; avatarUrl: string | null; color: string };
 

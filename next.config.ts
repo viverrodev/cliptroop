@@ -9,6 +9,8 @@ const channel = process.env.VERCEL_ENV === "production" ? "P" : process.env.VERC
 const commit = (process.env.VERCEL_GIT_COMMIT_SHA ?? "").slice(0, 7);
 
 const nextConfig: NextConfig = {
+  // No "X-Powered-By: Next.js" on answers: nothing to tell about what runs the app.
+  poweredByHeader: false,
   env: {
     NEXT_PUBLIC_APP_VERSION: version,
     NEXT_PUBLIC_APP_CHANNEL: channel,

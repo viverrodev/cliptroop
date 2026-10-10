@@ -71,13 +71,16 @@ export async function UsageTab() {
       </section>
 
       <div className="grid gap-4 lg:grid-cols-5 items-start scroll-mt-24" id="storage">
-        <Widget title="Uploads per day, 30 days" className="lg:col-span-3">
-          <UploadsChart days={usage.uploads} height={120} />
-          <p className="mt-3 text-[12px] text-ink-soft">
-            {fmtNum(usage.uploads.reduce((t, d) => t + d.files, 0))} files, {fmtBytes(usage.uploads.reduce((t, d) => t + d.bytes, 0))} in 30 days. Short videos are deleted after posting, on each team&rsquo;s
-            schedule (Team → Defaults → Video files), so storage goes down too.
-          </p>
-        </Widget>
+        <div className="lg:col-span-3 flex flex-col gap-4 min-w-0">
+          <Widget title="Uploads per day, 30 days">
+            <UploadsChart days={usage.uploads} height={120} />
+            <p className="mt-3 text-[12px] text-ink-soft">
+              {fmtNum(usage.uploads.reduce((t, d) => t + d.files, 0))} files, {fmtBytes(usage.uploads.reduce((t, d) => t + d.bytes, 0))} in 30 days. Short videos are deleted after posting, on each team&rsquo;s
+              schedule (Team → Defaults → Video files), so storage goes down too.
+            </p>
+          </Widget>
+          <StorageOutlook uploads={usage.uploads} used={usage.storage.bytes} limit={plan.storage} buckets={usage.buckets} cleaned={c.videoFilesCleaned} />
+        </div>
         <Widget title="Storage by kind of file" className="lg:col-span-2">
           {usage.buckets.length ? (
             <ul className="-my-2">
@@ -124,5 +127,81 @@ export async function UsageTab() {
         Counted <span className="tabular-nums">{new Date(usage.at).toISOString().slice(0, 16).replace("T", " ")}</span> UTC, when this page opened.
       </p>
     </div>
+  );
+}
+
+const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+/**
+ * Where file storage is heading, from the last 30 days of uploads: the pace,
+ * this week against the one before, the busiest day, the average file, how
+ * much room the plan has left and when it would run out at this pace (before
+ * clean-ups take videos away), and which weekdays the uploads come on.
+ */
+function StorageOutlook({ uploads, used, limit, buckets, cleaned }: { uploads: { day: string; files: number; bytes: number }[]; used: number; limit: number; buckets: { id: string; bytes: number }[]; cleaned: number }) {
+  const today = new Date();
+  const dayAgo = (n: number) => new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - n)).toISOString().slice(0, 10);
+  const sum = (from: number, to: number, f: (d: { files: number; bytes: number }) => number) => uploads.filter((d) => d.day >= dayAgo(from) && d.day <= dayAgo(to)).reduce((t, d) => t + f(d), 0);
+  const bytes30 = sum(29, 0, (d) => d.bytes);
+  const files30 = sum(29, 0, (d) => d.files);
+  const week = sum(6, 0, (d) => d.bytes);
+  const before = sum(13, 7, (d) => d.bytes);
+  const change = before > 0 ? Math.round(((week - before) / before) * 100) : null;
+  const perDay = bytes30 / 30;
+  const busiest = uploads.reduce<{ day: string; bytes: number } | null>((b, d) => (!b || d.bytes > b.bytes ? d : b), null);
+  const room = Math.max(0, limit - used);
+  const daysLeft = perDay > 0 ? Math.floor(room / perDay) : null;
+  const videos = buckets.find((b) => b.id === "review-videos")?.bytes ?? 0;
+  const total = buckets.reduce((t, b) => t + b.bytes, 0);
+  const byWeekday = WEEKDAYS.map(() => 0);
+  for (const d of uploads) byWeekday[(new Date(`${d.day}T00:00:00Z`).getUTCDay() + 6) % 7] += d.bytes;
+  const maxWeekday = Math.max(1, ...byWeekday);
+  const label = (d: string) => new Date(`${d}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+  const tiles: { label: string; value: React.ReactNode; sub: React.ReactNode }[] = [
+    { label: "A day, on average", value: fmtBytes(perDay), sub: `${(files30 / 30).toFixed(1)} files a day` },
+    {
+      label: "This week",
+      value: fmtBytes(week),
+      sub: change === null ? "nothing the week before" : <span className={change > 0 ? "text-gold" : change < 0 ? "text-green" : ""}>{change > 0 ? `${change}% more` : change < 0 ? `${-change}% less` : "the same"} than the week before</span>,
+    },
+    { label: "Average file", value: files30 ? fmtBytes(bytes30 / files30) : "–", sub: `${fmtNum(files30)} files in 30 days` },
+    { label: "Busiest day", value: busiest && busiest.bytes ? fmtBytes(busiest.bytes) : "–", sub: busiest && busiest.bytes ? label(busiest.day) : "no uploads yet" },
+    { label: "Short videos", value: total ? `${Math.round((videos / total) * 100)}%` : "–", sub: `of storage · ${fmtNum(cleaned)} cleaned up so far` },
+    {
+      label: "Room left",
+      value: fmtBytes(room),
+      sub: daysLeft === null ? "no uploads to measure a pace" : <span className={daysLeft < 30 ? "text-red" : daysLeft < 90 ? "text-gold" : ""}>{daysLeft > 3650 ? "years at this pace" : daysLeft < 1 ? "less than a day at this pace" : `≈ ${fmtNum(daysLeft)} day${Math.round(daysLeft) === 1 ? "" : "s"} at this pace`}</span>,
+    },
+  ];
+  return (
+    <Widget title="Where storage is heading">
+      <dl className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-4">
+        {tiles.map((t) => (
+          <div key={t.label} className="min-w-0">
+            <dt className="text-[12px] text-ink-soft">{t.label}</dt>
+            <dd className="font-display text-[22px] leading-tight font-semibold tabular-nums truncate">{t.value}</dd>
+            <dd className="text-[11.5px] text-ink-faint">{t.sub}</dd>
+          </div>
+        ))}
+      </dl>
+      <div className="mt-5 pt-4 border-t border-line/10">
+        <div className="text-[12px] text-ink-soft mb-2">Uploads by weekday, 30 days</div>
+        <div className="flex items-end gap-2 h-[72px]" role="img" aria-label={WEEKDAYS.map((w, i) => `${w}: ${fmtBytes(byWeekday[i])}`).join(", ")}>
+          {WEEKDAYS.map((w, i) => (
+            <span key={w} className="group flex-1 h-full flex flex-col items-center justify-end gap-1" title={`${w}: ${fmtBytes(byWeekday[i])}`}>
+              <span className={`block w-full max-w-[24px] rounded-t-[4px] ${byWeekday[i] ? "bg-amber/80 group-hover:bg-amber" : "bg-line/10"}`} style={{ height: byWeekday[i] ? `${Math.max(6, (byWeekday[i] / maxWeekday) * 100)}%` : 2 }} />
+            </span>
+          ))}
+        </div>
+        <div className="mt-1.5 flex gap-2 text-[11px] text-ink-faint">
+          {WEEKDAYS.map((w) => (
+            <span key={w} className="flex-1 text-center">
+              {w}
+            </span>
+          ))}
+        </div>
+      </div>
+      <p className="mt-3 text-[11.5px] text-ink-faint">The pace counts uploads only; clean-ups after posting take short videos away again, so storage grows slower than this.</p>
+    </Widget>
   );
 }

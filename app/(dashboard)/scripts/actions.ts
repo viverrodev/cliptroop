@@ -298,6 +298,31 @@ export async function resolveComment(id: string, resolved: boolean): Promise<Doc
   return {};
 }
 
+/**
+ * Resolve several comments of one document at once (the ones left on text
+ * that has since been rewritten). Same people as resolving one (0072).
+ */
+export async function resolveComments(scriptId: string, ids: string[]): Promise<DocResult<{ resolved: number }>> {
+  if (!UUID_RX.test(scriptId)) return { error: "Document not found." };
+  const list = [...new Set((Array.isArray(ids) ? ids : []).filter((x) => typeof x === "string" && UUID_RX.test(x)))].slice(0, 200);
+  if (!list.length) return { resolved: 0 };
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("script_comments")
+    .update({ resolved_at: new Date().toISOString() })
+    .eq("script_id", scriptId)
+    .in("id", list)
+    .is("resolved_at", null)
+    .select("id, scripts(short_video_id, long_video_id)");
+  if (error) return { error: "Couldn't resolve them. Only this video's scripters and its Review and Staging people can resolve comments." };
+  const first = data?.[0];
+  if (first) {
+    const s = (Array.isArray(first.scripts) ? first.scripts[0] : first.scripts) as { short_video_id: string | null; long_video_id: string | null } | null;
+    refreshDocs({ short: s?.short_video_id, long: s?.long_video_id });
+  }
+  return { resolved: data?.length ?? 0 };
+}
+
 export async function deleteComment(id: string): Promise<DocResult> {
   if (!UUID_RX.test(id)) return { error: "Comment not found." };
   const supabase = await createClient();

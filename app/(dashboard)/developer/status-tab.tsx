@@ -5,6 +5,7 @@ import { coreChecks, jobChecks, lastStatusCall, PARTS, partName, statusHistory, 
 import { BAR_COLOR, durationText, LEVEL } from "@/lib/status-levels";
 import { BarsAxis, BarsLegend, LocalTime, StatusBars } from "@/components/status/status-board";
 import { PlatformIcon } from "@/modules/short-videos/components/platform-icon";
+import { ChevronRightIcon } from "@/components/ui/icons";
 import { card, h2 } from "./ui";
 
 const HOURS = 72;
@@ -50,6 +51,8 @@ export async function StatusTab() {
   const alertsOn = shouldAlert();
   const env = process.env.VERCEL_ENV === "production" ? "production" : process.env.VERCEL_ENV === "preview" ? "staging" : "this computer";
   const nowLevel: Record<string, Level> = { app: "ok", ...Object.fromEntries([...core, ...jobs, ...vendors].map((c) => [c.key, c.level])) };
+  // Ongoing first, then newest first.
+  const ordered = [...incidents].sort((a, b) => Number(!b.endedAt) - Number(!a.endedAt) || b.startedAt.localeCompare(a.startedAt));
 
   return (
     <div className="space-y-5">
@@ -98,31 +101,41 @@ export async function StatusTab() {
       </section>
 
       <section className={`${card} px-4 sm:px-5 py-4`} id="incidents">
-        <h2 className={h2}>Incidents (7 days)</h2>
+        <div className="flex items-baseline gap-3">
+          <h2 className={`${h2} flex-1`}>Incidents (7 days)</h2>
+          {incidents.length > 0 && (
+            <span className="text-[12px] text-ink-faint tabular-nums">
+              {incidents.length} in all{incidents.some((i) => !i.endedAt) ? ` · ${incidents.filter((i) => !i.endedAt).length} ongoing` : ""}
+            </span>
+          )}
+        </div>
         {incidents.length === 0 ? (
           <p className="pt-2 text-[13.5px] text-ink-soft">{history.since ? "None." : "Nothing recorded yet: the status check runs every 10 minutes once migration 0067 is in and the Vault secrets are set."}</p>
         ) : (
-          <ul className="mt-1 divide-y divide-line/10">
-            {incidents.slice(0, 25).map((i) => {
-              const end = i.endedAt ? Date.parse(i.endedAt) : Date.now();
-              return (
-                <li key={`${i.part}-${i.startedAt}`} className="py-3 flex items-start gap-3">
-                  <span className={`mt-1.5 w-2.5 h-2.5 rounded-full flex-shrink-0 ${BAR_COLOR[i.level]}`} aria-hidden />
-                  <span className="flex-1 min-w-0">
-                    <span className="block text-[13.5px] font-semibold">
-                      {partName(i.part)} · {i.level === "down" ? "not working" : "slow or partly working"}
-                      {!i.endedAt && <span className="ml-2 rounded-full bg-red/15 text-red px-2 py-0.5 text-[11px] font-bold">Ongoing</span>}
-                    </span>
-                    <span className="block text-[12.5px] text-ink-soft">
-                      <LocalTime iso={i.startedAt} /> · {durationText(end - Date.parse(i.startedAt))}
-                      {i.endedAt ? "" : " so far"} · {i.samples} bad check{i.samples === 1 ? "" : "s"}
-                    </span>
-                    {i.detail && <span className="block mt-0.5 text-[12px] text-ink-soft font-mono break-words">{i.detail}</span>}
+          <>
+            {/* The latest three (ongoing ones first); the rest fold away. */}
+            <ul className="mt-1 divide-y divide-line/10">
+              {ordered.slice(0, 3).map((i) => (
+                <IncidentRow key={`${i.part}-${i.startedAt}`} i={i} />
+              ))}
+            </ul>
+            {ordered.length > 3 && (
+              <details className="group border-t border-line/10">
+                <summary className="list-none cursor-pointer select-none flex items-center gap-1.5 py-3 text-[12.5px] font-semibold text-ink-soft hover:text-ink [&::-webkit-details-marker]:hidden">
+                  <ChevronRightIcon className="w-3.5 h-3.5 transition-transform group-open:rotate-90" />
+                  <span className="group-open:hidden">
+                    Show {ordered.length - 3} more
                   </span>
-                </li>
-              );
-            })}
-          </ul>
+                  <span className="hidden group-open:inline">Show fewer</span>
+                </summary>
+                <ul className="divide-y divide-line/10 border-t border-line/10">
+                  {ordered.slice(3, 100).map((i) => (
+                    <IncidentRow key={`${i.part}-${i.startedAt}`} i={i} />
+                  ))}
+                </ul>
+              </details>
+            )}
+          </>
         )}
       </section>
 
@@ -181,6 +194,28 @@ export async function StatusTab() {
         </p>
       </section>
     </div>
+  );
+}
+
+type Incident = Awaited<ReturnType<typeof statusIncidents>>[number];
+
+function IncidentRow({ i }: { i: Incident }) {
+  const end = i.endedAt ? Date.parse(i.endedAt) : Date.now();
+  return (
+    <li className="py-3 flex items-start gap-3">
+      <span className={`mt-1.5 w-2.5 h-2.5 rounded-full flex-shrink-0 ${BAR_COLOR[i.level]}`} aria-hidden />
+      <span className="flex-1 min-w-0">
+        <span className="block text-[13.5px] font-semibold">
+          {partName(i.part)} · {i.level === "down" ? "not working" : "slow or partly working"}
+          {!i.endedAt && <span className="ml-2 rounded-full bg-red/15 text-red px-2 py-0.5 text-[11px] font-bold">Ongoing</span>}
+        </span>
+        <span className="block text-[12.5px] text-ink-soft">
+          <LocalTime iso={i.startedAt} /> · {durationText(end - Date.parse(i.startedAt))}
+          {i.endedAt ? "" : " so far"} · {i.samples} bad check{i.samples === 1 ? "" : "s"}
+        </span>
+        {i.detail && <span className="block mt-0.5 text-[12px] text-ink-soft font-mono break-words">{i.detail}</span>}
+      </span>
+    </li>
   );
 }
 

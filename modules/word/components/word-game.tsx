@@ -1,26 +1,45 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import Link from "next/link";
 import { guessWord } from "../actions";
-import type { WordMate, WordRow, WordState } from "../lib/state";
+import type { GuessResult, WordMate, WordRow, WordState } from "../lib/state";
 import { letterMarks, MAX_TRIES, shareGrid, WORD_LENGTH, type Mark } from "@/lib/word/score";
 import { Mascot } from "@/components/ui/mascot";
 import { Dialog } from "@/components/ui/dialog";
 import { CheckIcon, CopyIcon } from "@/components/ui/icons";
 import { useToast } from "@/components/ui/toast-provider";
+import { motionReduced } from "@/components/ui/count-up";
 import { sounds } from "@/lib/sounds";
 import { APP_NAME } from "@/lib/brand";
 
 const KEYS = ["qwertyuiop", "asdfghjkl", "zxcvbnm"];
 const FLIP_STEP = 250; // ms between tiles turning over
+const HALF = 250; // a tile turns edge-on in this long, then back with its colour
 const PRAISE = ["Genius!", "Magnificent!", "Impressive!", "Splendid!", "Great!", "Phew!"];
 const TILE: Record<Mark, string> = { correct: "word-correct", present: "word-present", absent: "word-absent" };
+const SHAKE: Keyframe[] = [
+  { transform: "translateX(0)" },
+  { transform: "translateX(-1px)", offset: 0.1 },
+  { transform: "translateX(3px)", offset: 0.2 },
+  { transform: "translateX(-6px)", offset: 0.3 },
+  { transform: "translateX(6px)", offset: 0.4 },
+  { transform: "translateX(-6px)", offset: 0.5 },
+  { transform: "translateX(6px)", offset: 0.6 },
+  { transform: "translateX(-6px)", offset: 0.7 },
+  { transform: "translateX(3px)", offset: 0.8 },
+  { transform: "translateX(-1px)", offset: 0.9 },
+  { transform: "translateX(0)" },
+];
 
 /**
  * The daily word: six tries at today's five-letter word, typed on the
- * keyboard below (or your own). Each guess is checked on the server, then
- * its tiles turn over one by one: green = right letter, right spot; gold =
+ * keyboard below (or your own). It answers like Wordle: a word that isn't
+ * one (or was tried) shakes at once, checked on this device; a real one
+ * starts turning over the moment you press Enter, while the server checks
+ * it against today's word (which the browser never knows), and each tile
+ * shows its colour as it turns: green = right letter, right spot; gold =
  * in the word, elsewhere; grey = not in it. Finishing (solved or not) is
  * today's contribution.
  */
@@ -28,66 +47,140 @@ export function WordGame({ initial }: { initial: WordState }) {
   const toast = useToast();
   const [state, setState] = useState(initial);
   const [current, setCurrent] = useState("");
-  const [revealing, setRevealing] = useState<number | null>(null);
-  const [shake, setShake] = useState(0);
+  /** The word being checked (it sits on the next row, turning over). */
+  const [pending, setPending] = useState<string | null>(null);
+  /** The row showing its colours tile by tile, and how many show so far. */
+  const [reveal, setReveal] = useState<{ row: number; shown: number } | null>(null);
   const [hop, setHop] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
   const [help, setHelp] = useState(false);
   const msgTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const words = useRef<Set<string> | null>(null);
+  const rowEls = useRef<(HTMLDivElement | null)[]>([]);
+  const tileEls = useRef<(HTMLDivElement | null)[][]>(Array.from({ length: MAX_TRIES }, () => []));
 
   const playing = state.status === "playing";
+  const busy = pending !== null || reveal !== null;
   // The keyboard only learns a row's colours once its tiles have turned.
-  const known = useMemo(() => letterMarks(state.rows.filter((_, i) => i !== revealing)), [state.rows, revealing]);
+  const known = useMemo(() => letterMarks(state.rows.filter((_, i) => i !== reveal?.row)), [state.rows, reveal?.row]);
   const say = useCallback((text: string, ms = 1800) => {
     setMsg(text);
     if (msgTimer.current) clearTimeout(msgTimer.current);
     msgTimer.current = setTimeout(() => setMsg(null), ms);
   }, []);
 
-  const submit = useCallback(async () => {
-    if (busy || !playing || revealing !== null) return;
-    if (current.length < WORD_LENGTH) {
-      setShake((n) => n + 1);
-      say("Five letters, please.");
-      return;
-    }
-    setBusy(true);
-    const r = await guessWord(current);
-    setBusy(false);
-    if ("error" in r) {
-      setShake((n) => n + 1);
-      say(r.error, 2400);
-      if (r.reason === "busy" || r.reason === "session" || r.reason === "setup") sounds.error();
-      return;
-    }
-    const next = r.state;
-    const row = next.rows.length - 1;
-    setState(next);
-    setCurrent("");
-    setRevealing(row);
-    const after = FLIP_STEP * (WORD_LENGTH - 1) + 520;
-    setTimeout(() => {
-      setRevealing(null);
-      if (next.status === "won") {
+  // The word list, on its own after the page is up: a non-word is refused at once.
+  useEffect(() => {
+    let alive = true;
+    import("@/lib/word/words")
+      .then((m) => {
+        if (alive) words.current = new Set(m.WORDS.split(" "));
+      })
+      .catch(() => {
+        /* the server checks every guess anyway */
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const shake = useCallback((row: number) => {
+    const el = rowEls.current[row];
+    if (el && !motionReduced()) el.animate(SHAKE, { duration: 450, easing: "ease-in-out" });
+  }, []);
+
+  /** After the server answered: each tile takes its colour while edge-on, then turns back. */
+  const land = useCallback(
+    async (row: number, word: string, flips: Animation[], r: GuessResult) => {
+      if ("error" in r) {
+        // Back to typing: the tiles turn back, the word stays to fix.
+        for (const a of flips) {
+          a.reverse();
+          void a.finished.then(() => a.cancel(), () => undefined);
+        }
+        setPending(null);
+        setCurrent(word);
+        shake(row);
+        say(r.error, 2400);
+        if (r.reason === "busy" || r.reason === "session" || r.reason === "setup") sounds.error();
+        return;
+      }
+      flushSync(() => {
+        setState((s) => ({ ...s, rows: [...s.rows, r.row], status: r.status, answer: r.answer ?? s.answer, stats: r.stats ?? s.stats, team: r.team ?? s.team }));
+        setPending(null);
+        setReveal({ row, shown: 0 });
+      });
+      for (let i = 0; i < WORD_LENGTH; i++) {
+        const flip = flips[i];
+        if (flip) await flip.finished.catch(() => undefined);
+        flushSync(() => setReveal({ row, shown: i + 1 }));
+        const el = tileEls.current[row][i];
+        if (flip && el) {
+          const back = el.animate([{ transform: "rotateX(90deg)" }, { transform: "rotateX(0deg)" }], { duration: HALF, easing: "ease-out", fill: "forwards" });
+          void back.finished.then(
+            () => {
+              flip.cancel();
+              back.cancel();
+            },
+            () => undefined
+          );
+        }
+      }
+      if (flips.length) await new Promise((res) => setTimeout(res, HALF));
+      setReveal(null);
+      if (r.status === "won") {
         setHop(true);
         sounds.celebrate();
         say(PRAISE[Math.min(PRAISE.length - 1, row)], 2600);
-      } else if (next.status === "lost") {
+      } else if (r.status === "lost") {
         sounds.pop();
-        say(`The word was ${next.answer?.toUpperCase()}`, 4000);
+        say(`The word was ${r.answer?.toUpperCase()}`, 4000);
       } else sounds.tick();
-    }, after);
-  }, [busy, playing, revealing, current, say]);
+    },
+    [say, shake]
+  );
+
+  const submit = useCallback(() => {
+    if (busy || !playing) return;
+    const row = state.rows.length;
+    const word = current;
+    if (word.length < WORD_LENGTH) {
+      shake(row);
+      say("Five letters, please.");
+      return;
+    }
+    if (words.current && !words.current.has(word)) {
+      shake(row);
+      say("Not in the word list.");
+      return;
+    }
+    if (state.rows.some((x) => x.word === word)) {
+      shake(row);
+      say("You tried that one already.");
+      return;
+    }
+    // The tiles start turning over now; their colours land when the server answers.
+    const tiles = tileEls.current[row].slice(0, WORD_LENGTH);
+    const flips =
+      motionReduced() || tiles.length < WORD_LENGTH || tiles.some((el) => !el)
+        ? []
+        : tiles.map((el, i) => el!.animate([{ transform: "rotateX(0deg)" }, { transform: "rotateX(90deg)" }], { duration: HALF, delay: i * FLIP_STEP, easing: "ease-in", fill: "forwards" }));
+    setPending(word);
+    setCurrent("");
+    guessWord(word).then(
+      (r) => land(row, word, flips, r),
+      () => land(row, word, flips, { error: "Couldn't check that. Try again.", reason: "busy" })
+    );
+  }, [busy, playing, state.rows, current, shake, say, land]);
 
   const press = useCallback(
     (key: string) => {
-      if (!playing || revealing !== null) return;
-      if (key === "enter") return void submit();
+      if (!playing || busy) return;
+      if (key === "enter") return submit();
       if (key === "back") return setCurrent((c) => c.slice(0, -1));
       if (/^[a-z]$/.test(key)) setCurrent((c) => (c.length < WORD_LENGTH ? c + key : c));
     },
-    [playing, revealing, submit]
+    [playing, busy, submit]
   );
 
   // Your own keyboard too (not while typing somewhere else, or with Ctrl / ⌘).
@@ -142,32 +235,27 @@ export function WordGame({ initial }: { initial: WordState }) {
       <div className="grid gap-[6px] w-full max-w-[19.5rem] [perspective:600px]" role="grid" aria-label={`Daily word #${state.number}, ${state.rows.length} of ${MAX_TRIES} tries used`}>
         {Array.from({ length: MAX_TRIES }, (_, r) => {
           const row: WordRow | null = state.rows[r] ?? null;
-          const typing = !row && playing && r === state.rows.length;
-          const letters = row ? row.word : typing ? current : "";
+          const checking = !row && pending !== null && r === state.rows.length;
+          const typing = !row && !checking && playing && r === state.rows.length;
+          const letters = row ? row.word : checking ? pending : typing ? current : "";
           const won = state.status === "won" && r === state.rows.length - 1 && hop;
           return (
-            // The typing row is drawn again on each refusal, so it shakes every time.
-            <div key={typing ? `r${r}-${shake}` : `r${r}`} role="row" className={`grid grid-cols-5 gap-[6px] ${typing && shake ? "word-shake" : ""}`}>
+            // Same key while a row is typed, checked and revealed: its tiles keep turning over.
+            <div key={`r${r}`} ref={(el) => void (rowEls.current[r] = el)} role="row" className="grid grid-cols-5 gap-[6px]">
               {Array.from({ length: WORD_LENGTH }, (_, i) => {
                 const ch = letters[i] ?? "";
                 const mark = row?.marks[i];
-                const flipping = revealing === r;
-                const shown = mark && (revealing === null || r < revealing || flipping);
+                const shown = mark && (!reveal || reveal.row !== r || i < reveal.shown);
                 return (
                   <div
                     key={`${i}-${ch}`}
+                    ref={(el) => void (tileEls.current[r][i] = el)}
                     role="gridcell"
-                    aria-label={ch ? `${ch.toUpperCase()}${mark ? `, ${mark === "correct" ? "right spot" : mark === "present" ? "in the word, other spot" : "not in the word"}` : ""}` : "empty"}
+                    aria-label={ch ? `${ch.toUpperCase()}${shown ? `, ${mark === "correct" ? "right spot" : mark === "present" ? "in the word, other spot" : "not in the word"}` : ""}` : "empty"}
                     className={`aspect-square flex items-center justify-center rounded-lg border-2 font-display text-[clamp(22px,7vw,30px)] font-semibold uppercase select-none ${
                       shown ? TILE[mark!] : ch ? "border-ink/45 bg-surface text-ink word-pop" : "border-line/20 bg-surface"
-                    } ${flipping ? "word-flip" : ""} ${won ? "word-hop" : ""}`}
-                    style={
-                      flipping
-                        ? { animationDelay: `${i * FLIP_STEP}ms`, transition: `background-color 0s ${i * FLIP_STEP + 250}ms, border-color 0s ${i * FLIP_STEP + 250}ms, color 0s ${i * FLIP_STEP + 250}ms` }
-                        : won
-                          ? { animationDelay: `${i * 90}ms` }
-                          : undefined
-                    }
+                    } ${won ? "word-hop" : ""}`}
+                    style={won ? { animationDelay: `${i * 90}ms` } : undefined}
                   >
                     {ch}
                   </div>
@@ -182,7 +270,7 @@ export function WordGame({ initial }: { initial: WordState }) {
         {msg && <span className="rounded-lg bg-ink text-paper px-3 py-1.5">{msg}</span>}
       </p>
 
-      {playing ? (
+      {playing || reveal ? (
         <div className="w-full max-w-[30rem] select-none" aria-label="Keyboard">
           {KEYS.map((row, ri) => (
             <div key={row} className="flex justify-center gap-[5px] mb-[6px]">
@@ -202,7 +290,7 @@ export function WordGame({ initial }: { initial: WordState }) {
           ))}
         </div>
       ) : (
-        <Result state={state} winRate={winRate} maxDist={maxDist} onShare={share} hidden={revealing !== null} />
+        <Result state={state} winRate={winRate} maxDist={maxDist} onShare={share} hidden={false} />
       )}
 
       <Dialog open={help} onClose={() => setHelp(false)} title="How to play" description="Guess the word in six tries.">

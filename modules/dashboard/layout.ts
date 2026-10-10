@@ -28,6 +28,9 @@ export type WidgetType =
  * so "Fill empty space" leaves it at exactly that size.
  */
 export type WidgetInstance = { id: string; type: WidgetType; x: number; y: number; w: number; h: number; fixed?: boolean; settings?: Record<string, unknown> };
+
+/** The Contributions widget's colours (its settings list them without loading the widget). */
+export const CONTRIB_COLORS = ["#22c55e", "#3b82f6", "#a855f7", "#ec4899", "#f97316", "#eab308", "#14b8a6"];
 export type Layout = { v: 2; widgets: WidgetInstance[]; fill: boolean; sounds: boolean };
 
 /**
@@ -38,7 +41,8 @@ export type Layout = { v: 2; widgets: WidgetInstance[]; fill: boolean; sounds: b
  * the same). Sized so each one reads and taps well on a phone.
  */
 export type Stack = { span?: 1 | 2; min: number; max: number; phone?: number | ((settings?: Record<string, unknown>) => number) };
-type Meta = { name: string; description: string; w: number; h: number; limits: Limits; bare?: boolean; settings?: Record<string, unknown>; stack: Stack };
+/** `isNew`: shown first in Add a widget, with a "New" badge (for a release or two). */
+type Meta = { name: string; description: string; w: number; h: number; limits: Limits; bare?: boolean; settings?: Record<string, unknown>; stack: Stack; isNew?: boolean };
 
 /** Every widget once per dashboard. w/h = size when added. */
 export const CATALOG: Record<WidgetType, Meta> = {
@@ -47,7 +51,7 @@ export const CATALOG: Record<WidgetType, Meta> = {
   clock: { name: "Clock", description: "A clock face with moving hands, the time and date.", w: 2, h: 2, limits: { minW: 2, minH: 2, maxW: 4, maxH: 4 }, bare: true, settings: { h24: true, secondHand: true } , stack: { min: 2, max: 3, phone: 2 } },
   word: { name: "Daily word", description: "Start your day with a five-letter word. Finishing it counts as a contribution.", w: 2, h: 3, limits: { minW: 2, minH: 2, maxW: 4, maxH: 6 }, stack: { min: 3, max: 4, phone: 4 } },
   // Objectives (1.14.0): loads its own numbers and stays live.
-  objectives: { name: "Objectives", description: "The team's goals as rings that fill up live as videos go out, with what's left and the days to go. Confetti when one is reached.", w: 4, h: 3, limits: { minW: 2, minH: 2, maxW: 12, maxH: 8 }, settings: { show: "all" }, stack: { min: 3, max: 6, phone: 4 } },
+  objectives: { name: "Objectives", description: "The team's goals as rings that fill up live as videos go out, with what's left and the days to go. Confetti when one is reached.", w: 4, h: 3, limits: { minW: 2, minH: 2, maxW: 12, maxH: 8 }, settings: { show: "all" }, stack: { min: 3, max: 6, phone: 4 }, isNew: true },
   posting: { name: "Posting today", description: "Today's posts per short, where each platform stands, with filters; and anything that failed.", w: 2, h: 3, limits: { minW: 2, minH: 2, maxW: 6, maxH: 8 } , stack: { min: 2, max: 4, phone: 3 } },
   todo: { name: "To-do list", description: "Your own list: priorities, due dates, notes.", w: 2, h: 4, limits: { minW: 2, minH: 3, maxW: 6, maxH: 12 } , stack: { min: 5, max: 8, phone: 5 } },
   upcomingShorts: { name: "Upcoming shorts", description: "The next shorts by date, with their step and editor.", w: 2, h: 4, limits: { minW: 2, minH: 2, maxW: 6, maxH: 12 } , stack: { min: 5, max: 8, phone: 6 } },

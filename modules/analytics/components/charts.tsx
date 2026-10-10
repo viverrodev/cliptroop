@@ -97,6 +97,8 @@ export function LineChart({
   format = fmtCompact,
   height = 240,
   ariaLabel,
+  onPick,
+  pickHint = "Click for this day's videos",
 }: {
   labels: string[];
   series: Series[];
@@ -104,6 +106,9 @@ export function LineChart({
   format?: (n: number | null) => string;
   height?: number;
   ariaLabel: string;
+  /** Click (or Enter on) a point: its index (e.g. to open that day's videos). */
+  onPick?: (index: number) => void;
+  pickHint?: string;
 }) {
   const [box, width] = useWidth<HTMLDivElement>();
   const [hover, setHover] = useState<number | null>(null);
@@ -132,11 +137,12 @@ export function LineChart({
     return d;
   };
   const step = Math.max(1, Math.ceil(n / Math.max(2, Math.floor(iw / 70))));
-  const pick = (clientX: number, el: SVGElement) => {
+  const indexAt = (clientX: number, el: SVGElement) => {
     const r = el.getBoundingClientRect();
     const px = clientX - r.left;
-    setHover(Math.max(0, Math.min(n - 1, Math.round(((px - left) / iw) * (n - 1)))));
+    return Math.max(0, Math.min(n - 1, Math.round(((px - left) / iw) * (n - 1))));
   };
+  const pick = (clientX: number, el: SVGElement) => setHover(indexAt(clientX, el));
   return (
     <div ref={box} className="relative select-none">
       {width > 0 && (
@@ -146,14 +152,19 @@ export function LineChart({
           role="img"
           aria-label={ariaLabel}
           tabIndex={0}
-          className="block outline-none focus-visible:ring-2 focus-visible:ring-amber rounded-lg"
+          className={`block outline-none focus-visible:ring-2 focus-visible:ring-amber rounded-lg ${onPick ? "cursor-pointer" : ""}`}
           onPointerMove={(e) => pick(e.clientX, e.currentTarget)}
           onPointerLeave={() => setHover(null)}
+          onClick={onPick ? (e) => onPick(indexAt(e.clientX, e.currentTarget)) : undefined}
           onFocus={() => setHover((h) => h ?? n - 1)}
           onBlur={() => setHover(null)}
           onKeyDown={(e) => {
             if (e.key === "ArrowLeft") setHover((h) => Math.max(0, (h ?? n - 1) - 1));
             if (e.key === "ArrowRight") setHover((h) => Math.min(n - 1, (h ?? 0) + 1));
+            if (onPick && (e.key === "Enter" || e.key === " ") && hover !== null) {
+              e.preventDefault();
+              onPick(hover);
+            }
           }}
         >
           {ticks.map((t) => (
@@ -206,6 +217,7 @@ export function LineChart({
               <span className="text-ink-soft truncate">{previous.label}</span>
             </div>
           )}
+          {onPick && <div className="mt-1 pt-1 border-t border-line/10 text-[10.5px] text-ink-faint">{pickHint}</div>}
         </Tooltip>
       )}
     </div>

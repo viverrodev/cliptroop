@@ -51,6 +51,24 @@
   --obj-green: 0 131 0;
   --obj-violet: 98 80 214;
   --obj-red: 227 73 72;
+  /* 1.15.0: sixteen more to pick from (each at least about 3:1 on its surface;
+     a goal's name or number is always beside its colour). */
+  --obj-teal: 13 128 128;
+  --obj-sky: 2 132 199;
+  --obj-indigo: 67 56 202;
+  --obj-purple: 147 51 234;
+  --obj-fuchsia: 219 39 119;
+  --obj-rose: 190 18 60;
+  --obj-peach: 234 128 70;
+  --obj-lime: 77 124 15;
+  --obj-mint: 16 160 110;
+  --obj-cyan: 8 145 178;
+  --obj-navy: 30 58 138;
+  --obj-brown: 146 84 40;
+  --obj-slate: 84 98 120;
+  --obj-gold: 181 134 0;
+  --obj-plum: 134 25 143;
+  --obj-olive: 110 120 20;
   /* --font-display / --font-body / --font-mono are provided by next/font
      via the className on <html> in app/layout.tsx — not redefined here,
      so there's a single source of truth instead of two competing ones. */
@@ -88,6 +106,22 @@
   --obj-green: 0 131 0;
   --obj-violet: 144 133 233;
   --obj-red: 230 103 103;
+  --obj-teal: 32 158 158;
+  --obj-sky: 56 170 230;
+  --obj-indigo: 129 120 240;
+  --obj-purple: 172 110 245;
+  --obj-fuchsia: 236 92 160;
+  --obj-rose: 240 82 110;
+  --obj-peach: 245 150 100;
+  --obj-lime: 132 190 40;
+  --obj-mint: 60 200 150;
+  --obj-cyan: 34 190 220;
+  --obj-navy: 110 140 225;
+  --obj-brown: 190 125 80;
+  --obj-slate: 140 155 178;
+  --obj-gold: 214 168 40;
+  --obj-plum: 196 90 205;
+  --obj-olive: 160 170 60;
 }
 
 /*
@@ -136,6 +170,15 @@ html[data-palette="pine"]:not(.dark) { --paper: 230 236 233; --paper-2: 220 229 
 html.dark[data-palette="pine"] { --paper: 10 16 13; --paper-2: 14 22 18; --surface: 19 29 24; --surface-2: 25 37 31; --amber: 34 140 100; }
 html[data-palette="ink"]:not(.dark) { --paper: 236 236 236; --paper-2: 228 228 228; --surface: 255 255 255; --surface-2: 246 246 246; --amber: 28 28 30; }
 html.dark[data-palette="ink"] { --paper: 12 12 13; --paper-2: 17 17 18; --surface: 24 24 26; --surface-2: 31 31 34; --amber: 120 120 128; }
+/* Ink's greys with coloured buttons (1.15.0): orange (the app's own), grape, orchid and cherry. */
+html[data-palette="inkorange"]:not(.dark) { --paper: 236 236 236; --paper-2: 228 228 228; --surface: 255 255 255; --surface-2: 246 246 246; --amber: 232 99 13; }
+html.dark[data-palette="inkorange"] { --paper: 12 12 13; --paper-2: 17 17 18; --surface: 24 24 26; --surface-2: 31 31 34; --amber: 232 99 13; }
+html[data-palette="inkgrape"]:not(.dark) { --paper: 236 236 236; --paper-2: 228 228 228; --surface: 255 255 255; --surface-2: 246 246 246; --amber: 109 64 214; }
+html.dark[data-palette="inkgrape"] { --paper: 12 12 13; --paper-2: 17 17 18; --surface: 24 24 26; --surface-2: 31 31 34; --amber: 139 102 240; }
+html[data-palette="inkorchid"]:not(.dark) { --paper: 236 236 236; --paper-2: 228 228 228; --surface: 255 255 255; --surface-2: 246 246 246; --amber: 162 28 175; }
+html.dark[data-palette="inkorchid"] { --paper: 12 12 13; --paper-2: 17 17 18; --surface: 24 24 26; --surface-2: 31 31 34; --amber: 192 72 206; }
+html[data-palette="inkcherry"]:not(.dark) { --paper: 236 236 236; --paper-2: 228 228 228; --surface: 255 255 255; --surface-2: 246 246 246; --amber: 200 30 48; }
+html.dark[data-palette="inkcherry"] { --paper: 12 12 13; --paper-2: 17 17 18; --surface: 24 24 26; --surface-2: 31 31 34; --amber: 229 62 74; }
 
 body {
   background: rgb(var(--paper));
@@ -847,3 +890,8 @@ html.dark .word-absent { background: #3f3a31; border-color: #3f3a31; }
 .obj-shine { animation: obj-shine 2.2s ease-in-out 0.6s 2; }
 @keyframes obj-shine { 0%, 100% { opacity: 0; transform: translateX(-140%) skewX(-18deg); } 50% { opacity: 0.85; transform: translateX(140%) skewX(-18deg); } }
 .obj-pulse-dot { animation: live-ping 1.6s ease-out infinite; }
+/* Rows that unfold (the periods before a goal was set). */
+.obj-row-in { animation: fadein 0.32s var(--ease-out) both; }
+@media (prefers-reduced-motion: reduce) {
+  .obj-row-in { animation: none; }
+}

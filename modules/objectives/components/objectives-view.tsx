@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { Mascot } from "@/components/ui/mascot";
 import { useToast } from "@/components/ui/toast-provider";
@@ -61,7 +61,9 @@ export function ObjectivesView({ initial, teamId, canEdit, openId, onDashboard }
   const detail = b.objectives.find((o) => o.id === detailId) ?? null;
   const counts = { all: active.length, reached: active.filter((o) => statusOf(o) === "reached").length, on_track: active.filter((o) => statusOf(o) === "on_track").length, behind: active.filter((o) => statusOf(o) === "behind").length };
 
-  const closeDetail = () => {
+  const closeSchedule = useCallback(() => setSchedule(null), []);
+  // Stable, so the open dialog doesn't take the focus back every time the board refreshes live.
+  const closeDetail = useCallback(() => {
     setDetailId(null);
     try {
       const u = new URL(window.location.href);
@@ -70,7 +72,7 @@ export function ObjectivesView({ initial, teamId, canEdit, openId, onDashboard }
         window.history.replaceState(window.history.state, "", u.pathname + u.search + u.hash);
       }
     } catch {}
-  };
+  }, []);
 
   function addToDashboard() {
     startAdding(async () => {
@@ -350,7 +352,7 @@ export function ObjectivesView({ initial, teamId, canEdit, openId, onDashboard }
           setSchedule(o);
         }}
       />
-      <ScheduleDialog open={!!schedule} onClose={() => setSchedule(null)} objective={schedule} canEdit={canEdit} />
+      <ScheduleDialog open={!!schedule} onClose={closeSchedule} objective={schedule} canEdit={canEdit} />
     </div>
   );
 }

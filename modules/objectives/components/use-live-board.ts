@@ -14,7 +14,8 @@ import type { Board } from "../lib/types";
  * request (and the library's previews reuse it).
  */
 
-export type LiveBoard = Board & { ready: boolean };
+/** canEdit: the person is a master (the widget offers "New objective"); the page knows it already. */
+export type LiveBoard = Board & { ready: boolean; canEdit?: boolean };
 type Mode = "widget" | "page";
 type Loaded = { board?: LiveBoard; error?: string };
 const cache = new Map<string, { at: number; p: Promise<Loaded> }>();

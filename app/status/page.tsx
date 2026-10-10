@@ -7,7 +7,7 @@ import { isDeveloper } from "@/lib/errors";
 import { coreChecks, jobChecks, PARTS, partName, statusHistory, statusIncidents, VENDORS, vendorChecks, worst, type Level } from "@/lib/status";
 import { BAR_COLOR, durationText, LEVEL, type BarView } from "@/lib/status-levels";
 import { Brand } from "@/components/ui/clip-logo";
-import { AlertIcon, CheckIcon, ExternalIcon } from "@/components/ui/icons";
+import { AlertIcon, CheckIcon, ChevronRightIcon, ExternalIcon } from "@/components/ui/icons";
 import { AutoRefresh, BarsAxis, BarsLegend, LocalTime, StatusBars } from "@/components/status/status-board";
 
 export const metadata: Metadata = publicMetadata("/status", "Status", `Is ${APP_NAME} working right now? Live status and the last 3 days, hour by hour.`);
@@ -49,7 +49,11 @@ export default async function StatusPage() {
 
   // Levels only: no details leave the server on this page.
   const bars = (key: string): BarView[] => (history.bars[key] ?? []).map(({ hour, level, samples, warn, down }) => ({ hour, level, samples, warn, down }));
-  const shownIncidents = incidents.filter((i) => PARTS.some((p) => p.key === i.part) || VENDORS.some((v) => v.key === i.part)).slice(0, 12);
+  const shownIncidents = incidents
+    .filter((i) => PARTS.some((p) => p.key === i.part) || VENDORS.some((v) => v.key === i.part))
+    // Ongoing first, then newest first.
+    .sort((a, b) => Number(!b.endedAt) - Number(!a.endedAt) || b.startedAt.localeCompare(a.startedAt))
+    .slice(0, 30);
 
   const Part = ({ k, name, caption, href }: { k: string; name: string; caption?: string; href?: string }) => {
     const level: Level = (k in vendorNow ? vendorNow[k] : now[k]) ?? "unknown";
@@ -140,25 +144,28 @@ export default async function StatusPage() {
           {shownIncidents.length === 0 ? (
             <p className="py-2 text-[13.5px] text-ink-soft">{history.since ? "No problems in the last 7 days." : "Nothing recorded yet. The history fills in from the first check (every 10 minutes)."}</p>
           ) : (
-            <ul className="divide-y divide-line/10">
-              {shownIncidents.map((i) => {
-                const end = i.endedAt ? Date.parse(i.endedAt) : Date.now();
-                return (
-                  <li key={`${i.part}-${i.startedAt}`} className="py-3 flex items-start gap-3">
-                    <span className={`mt-1.5 w-2.5 h-2.5 rounded-full flex-shrink-0 ${BAR_COLOR[i.level]}`} aria-hidden />
-                    <span className="flex-1 min-w-0">
-                      <span className="block text-[13.5px] font-semibold">
-                        {partName(i.part)} · {i.level === "down" ? "not working" : "slow or partly working"}
-                        {!i.endedAt && <span className="ml-2 rounded-full bg-red/15 text-red px-2 py-0.5 text-[11px] font-bold">Ongoing</span>}
-                      </span>
-                      <span className="block text-[12.5px] text-ink-soft">
-                        <LocalTime iso={i.startedAt} /> · {i.endedAt ? `for ${durationText(end - Date.parse(i.startedAt))}` : `for ${durationText(end - Date.parse(i.startedAt))} so far`}
-                      </span>
-                    </span>
-                  </li>
-                );
-              })}
-            </ul>
+            <>
+              {/* The latest three; the rest fold away. */}
+              <ul className="divide-y divide-line/10">
+                {shownIncidents.slice(0, 3).map((i) => (
+                  <IncidentItem key={`${i.part}-${i.startedAt}`} i={i} />
+                ))}
+              </ul>
+              {shownIncidents.length > 3 && (
+                <details className="group border-t border-line/10">
+                  <summary className="list-none cursor-pointer select-none flex items-center gap-1.5 py-3 text-[12.5px] font-semibold text-ink-soft hover:text-ink [&::-webkit-details-marker]:hidden">
+                    <ChevronRightIcon className="w-3.5 h-3.5 transition-transform group-open:rotate-90" />
+                    <span className="group-open:hidden">Show {shownIncidents.length - 3} more</span>
+                    <span className="hidden group-open:inline">Show fewer</span>
+                  </summary>
+                  <ul className="divide-y divide-line/10 border-t border-line/10">
+                    {shownIncidents.slice(3).map((i) => (
+                      <IncidentItem key={`${i.part}-${i.startedAt}`} i={i} />
+                    ))}
+                  </ul>
+                </details>
+              )}
+            </>
           )}
         </section>
 
@@ -185,5 +192,25 @@ export default async function StatusPage() {
         </p>
       </div>
     </main>
+  );
+}
+
+type Incident = Awaited<ReturnType<typeof statusIncidents>>[number];
+
+function IncidentItem({ i }: { i: Incident }) {
+  const end = i.endedAt ? Date.parse(i.endedAt) : Date.now();
+  return (
+    <li className="py-3 flex items-start gap-3">
+      <span className={`mt-1.5 w-2.5 h-2.5 rounded-full flex-shrink-0 ${BAR_COLOR[i.level]}`} aria-hidden />
+      <span className="flex-1 min-w-0">
+        <span className="block text-[13.5px] font-semibold">
+          {partName(i.part)} · {i.level === "down" ? "not working" : "slow or partly working"}
+          {!i.endedAt && <span className="ml-2 rounded-full bg-red/15 text-red px-2 py-0.5 text-[11px] font-bold">Ongoing</span>}
+        </span>
+        <span className="block text-[12.5px] text-ink-soft">
+          <LocalTime iso={i.startedAt} /> · {i.endedAt ? `for ${durationText(end - Date.parse(i.startedAt))}` : `for ${durationText(end - Date.parse(i.startedAt))} so far`}
+        </span>
+      </span>
+    </li>
   );
 }

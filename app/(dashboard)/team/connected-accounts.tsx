@@ -195,7 +195,7 @@ export function ConnectedAccounts({
   async function disconnect(platform: AccountView["platform"]) {
     const ok = await confirm({
       title: `Disconnect ${META[platform].name}?`,
-      description: "Scheduled posts to it will stop. You can connect it again any time.",
+      description: "Scheduled posts to it will stop, and its numbers leave Analytics, the dashboard and objectives. Connect the same account again to bring them back; connecting a different one starts fresh.",
       confirmLabel: "Disconnect",
       danger: true,
     });

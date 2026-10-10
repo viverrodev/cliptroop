@@ -26,13 +26,33 @@ export async function runCleanupJob() {
 
 /** 05:10 UTC: copy every team's numbers, then check the every-minute timer is still running. */
 export async function runAnalyticsJob() {
+  const started = Date.now();
   const result = await syncAllTeams(45_000);
+  // Projections of teams the copy didn't reach (no connected account, or out of time): today's values too.
+  const projections = await recordOtherProjections(new Set(result.results.map((r) => r.team)), Math.max(5_000, 52_000 - (Date.now() - started))).catch(() => 0);
   await watchHealth("daily");
   return {
     ok: true,
     job: "analytics" as const,
     teams: result.teams,
     synced: result.synced,
+    projections,
     platforms: result.results.flatMap((r) => r.results.map((x) => ({ platform: x.platform, ok: x.ok, rows: x.rows, error: x.error }))),
   };
+}
+
+async function recordOtherProjections(done: Set<string>, budgetMs: number) {
+  const { createAdminClient } = await import("@/lib/supabase/admin");
+  const { recordProjections } = await import("@/modules/projections/lib/record");
+  const started = Date.now();
+  const { data, error } = await createAdminClient().from("projections").select("team_id").is("archived_at", null).is("ended_at", null).limit(5000);
+  if (error) return 0;
+  const teams = [...new Set(((data ?? []) as { team_id: string }[]).map((r) => r.team_id))].filter((t) => !done.has(t));
+  let n = 0;
+  for (const t of teams) {
+    if (Date.now() - started > budgetMs) break;
+    await recordProjections(t).catch(() => undefined);
+    n++;
+  }
+  return n;
 }

@@ -13,6 +13,7 @@ import { loadSources } from "@/modules/objectives/lib/sources";
 import { queueObjectivesSync, syncObjectives } from "@/modules/objectives/lib/sync";
 import { recentPeriods } from "@/modules/objectives/lib/periods";
 import type { Board, ObjectiveView } from "@/modules/objectives/lib/types";
+import { listTeamPeople, type TeamPerson } from "@/modules/short-videos/lib/queries";
 
 /*
  * Objectives (1.14.0). Masters set them (Team → Objectives); the database
@@ -240,7 +241,8 @@ export async function previewObjective(teamId: string, input: ObjectiveInput, id
   const kind = kindOf(row.period);
   const from = recentPeriods(kind, now.day, historyCount(kind, "short"))[0];
   const src = await loadSources(supabase, teamId, needsOf([row]), from, now.day, tz);
-  return { view: viewFor(row, src, overrides, people, now, { history: "short", items: false }) };
+  // How this target would have gone in the last few periods (none of them judged for real).
+  return { view: viewFor(row, src, overrides, people, now, { history: "short", items: false, tz, whatIf: true }) };
 }
 
 /**
@@ -248,16 +250,26 @@ export async function previewObjective(teamId: string, input: ObjectiveInput, id
  * The server's own count runs after it (at most every 30 s), so a goal
  * reached by something no hook saw is still celebrated.
  */
-export async function loadObjectivesBoard(teamId: string, mode: "widget" | "page" = "widget"): Promise<R<{ board: Board & { ready: boolean } }>> {
+export async function loadObjectivesBoard(teamId: string, mode: "widget" | "page" = "widget"): Promise<R<{ board: Board & { ready: boolean; canEdit: boolean } }>> {
   if (!UUID.test(teamId)) return { error: "Team not found." };
-  const { supabase, user, member } = await who(teamId);
+  const { supabase, user, member, master } = await who(teamId);
   if (!user) return { error: "Your session expired. Sign in again." };
   if (!member) return { error: "You're not on this team." };
   const board = await getObjectivesBoard(supabase, teamId, { history: mode === "page" ? "full" : "short", items: mode === "page" });
   if (board.ready && board.objectives.some((o) => !o.paused)) {
     after(() => syncObjectives(teamId, { throttle: 30 }).then(() => undefined, (e) => console.error("[objectives] load sync", e instanceof Error ? e.message : e)));
   }
-  return { board };
+  // canEdit: masters get "New objective" right on the dashboard widget.
+  return { board: { ...board, canEdit: master } };
+}
+
+/** The team's people, for the objective editor opened from the dashboard widget (masters). */
+export async function objectiveEditorPeople(teamId: string): Promise<R<{ people: TeamPerson[] }>> {
+  if (!UUID.test(teamId)) return { error: "Team not found." };
+  const { user, master } = await who(teamId);
+  if (!user) return { error: "Your session expired. Sign in again." };
+  if (!master) return { error: "Only masters can set objectives." };
+  return { people: await listTeamPeople(teamId) };
 }
 
 /** "Put it on my dashboard": adds the Objectives widget to your own layout. */

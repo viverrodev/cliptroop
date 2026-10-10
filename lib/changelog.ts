@@ -23,6 +23,27 @@ export type Release = {
 
 export const CHANGELOG: Release[] = [
   {
+    version: "1.15.0",
+    date: "2026-10-10",
+    title: "Projections, and only your accounts' numbers",
+    changes: [
+      { kind: "new", text: "Projections (Objectives → Projections): long-term targets with a date, like 200K subscribers by December or a Reels skip rate under 22% by spring. Set one and check back: its value is kept every morning, with how far it's come, the pace now and the pace it needs, where it lands at this pace and the day it gets there. The team is told when one is reached, and the masters how it ended." },
+      { kind: "new", text: "Over 40 things to measure: followers on each platform, views and views a day, engaged view rate, watch hours, average view duration and % viewed, likes, comments, shares, saves, engagement and like rates, new followers per 1,000 views, and per video: average and median views, best video, the share of videos past a views mark, % viewed, watch time, subscribers per video, the Reels skip rate. Plus revenue and RPM (for the people who see revenue), and shorts a week and long videos a month." },
+      { kind: "new", text: "Compare, on every projection: the channel's key numbers the day it was set next to the same numbers now, what moved and by how much, platform by platform." },
+      { kind: "new", text: "Analytics: click a day on Views per day to see every video that got views that day, on every platform, with how many each got and its share of the day. Filter by platform, shorts or long videos, sort by views or newest, step to the day before or after, and open any video." },
+      { kind: "new", text: "Four more colour themes: Ink Orange, Ink Grape, Ink Orchid and Ink Cherry, Ink's greys with orange, grape, orchid or cherry buttons." },
+      { kind: "new", text: "Objectives: sixteen more colours (24 in all), and a New objective button right on the dashboard widget." },
+      { kind: "better", text: "Analytics, the dashboard, objectives and projections only count the accounts connected now. Connecting a different channel, account or Page removes the old one's numbers (its history is fetched again for the new one), a disconnected account's numbers leave until you connect it again, and the Content tab no longer lists posts made on earlier accounts. Numbers already mixed from a Page switched before this update are cleaned up." },
+      { kind: "better", text: "The daily word feels instant: the tiles flip as soon as you press Enter, words are checked right away on your device, and each guess is saved in one quick step." },
+      { kind: "better", text: "Objectives only judge the time since a goal was set: weeks or months from before it show as Before this goal (faint, folded away) and never count as missed or toward streaks, bests and averages. A finished period without any platform numbers says No numbers instead of Missed." },
+      { kind: "better", text: "Script comments name the document they belong to, and comments left on words that were rewritten since are grouped at the bottom, with Resolve all." },
+      { kind: "better", text: "Developer → Usage puts the space under Uploads per day to work (where storage is heading, the busiest days, room left), and Status shows the three latest incidents with the rest folded away." },
+      { kind: "better", text: "Faster pages: the dashboard downloads only the code for the widgets on it, the Team tabs, Objectives and Projections load only their own code, the upload code arrives with the first upload instead of with every short's page, and the dashboard's Analytics widgets share their lookups." },
+      { kind: "better", text: "One widget hitting a problem no longer takes the whole dashboard down: its own box says so, with Try again, and the rest keeps working." },
+      { kind: "fixed", text: "Opening the app could say you had no team (Start your first team) until you refreshed. A passing hiccup loading your teams is now retried, and never mistaken for having none." },
+    ],
+  },
+  {
     version: "1.14.0",
     date: "2026-10-10",
     title: "Objectives: the team's goals, live",

@@ -5,8 +5,8 @@ import { cookies } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 import { actorMeta, sendNotifications, teamMeta } from "@/lib/notify";
 import { getMembership } from "@/lib/permissions/membership";
-import { syncTeamAnalytics } from "@/modules/analytics/lib/sync";
-import { getAudience, getContent, getProduction, type Audience, type ContentItem, type Production } from "@/modules/analytics/lib/queries";
+import { fetchYouTubeDay, syncTeamAnalytics } from "@/modules/analytics/lib/sync";
+import { getAudience, getContent, getProduction, getViewsDay, sharedLookups, type Audience, type ContentItem, type DayViews, type Production } from "@/modules/analytics/lib/queries";
 import { addDays, todayIn, windowFor } from "@/modules/analytics/lib/ranges";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -85,8 +85,42 @@ export async function loadDashAudience(teamId: string): Promise<Result<{ data: D
   const tz = await teamTz(teamId);
   if (!tz) return { error: "Not on this team." };
   const w = windowFor("28d", addDays(todayIn(tz), -1));
-  const [audience, content] = await Promise.all([getAudience(teamId, w), getContent(teamId, w)]);
+  // The connected platforms and whose numbers they are: looked up once for both.
+  const shared = sharedLookups(teamId, await createClient());
+  const [audience, content] = await Promise.all([getAudience(teamId, w, shared), getContent(teamId, w, shared)]);
   return { data: { audience, top: content.items.slice(0, 8) } };
+}
+
+// A day's YouTube videos asked for at most once per 10 minutes (per server), when the daily copy didn't keep them.
+const askedDays = new Map<string, number>();
+
+/**
+ * What got the views on one day of the Views chart: every video, on every
+ * connected platform, with its views that day (anyone on the team). A day
+ * the copies didn't keep YouTube's per-video numbers for is asked from
+ * YouTube right then (and kept).
+ */
+export async function loadViewsDay(teamId: string, day: string): Promise<Result<{ data: DayViews }>> {
+  if (!UUID.test(teamId) || !/^\d{4}-\d{2}-\d{2}$/.test(day)) return { error: "Pick a day on the chart." };
+  const tz = await teamTz(teamId);
+  if (!tz) return { error: "Not on this team." };
+  let data = await getViewsDay(teamId, day);
+  const yt = data.platforms.find((p) => p.platform === "youtube");
+  const today = todayIn(tz);
+  const yearsBack = addDays(today, -3 * 365);
+  if (yt && !yt.count && (yt.views ?? 0) > 0 && day < today && day >= yearsBack) {
+    const key = `${teamId}:${day}`;
+    if ((askedDays.get(key) ?? 0) < Date.now() - 10 * 60_000) {
+      askedDays.set(key, Date.now());
+      if (askedDays.size > 2000) askedDays.clear();
+      try {
+        if (await fetchYouTubeDay(teamId, day)) data = await getViewsDay(teamId, day);
+      } catch {
+        /* YouTube didn't answer: the dialog says what it has */
+      }
+    }
+  }
+  return { data };
 }
 
 /** The last 7 days of our own work (shorts, long videos, on time, overdue). */

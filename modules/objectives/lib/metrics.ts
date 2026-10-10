@@ -362,10 +362,25 @@ export const sameFilters = (a: ObjectiveFilters, b: ObjectiveFilters) => JSON.st
 // the --obj-* tokens in globals.css). New objectives take the next free one.
 // ---------------------------------------------------------------------------
 
-export const OBJECTIVE_COLORS = ["blue", "orange", "aqua", "yellow", "magenta", "green", "violet", "red"] as const;
+/**
+ * Objective colours. The first eight were checked as a set (colour-blind
+ * separation), so new objectives get those first; sixteen more (1.15.0) can be
+ * picked. The ids are stored (objectives.color), so never rename one.
+ */
+export const OBJECTIVE_COLORS = [
+  "blue", "orange", "aqua", "yellow", "magenta", "green", "violet", "red",
+  "teal", "sky", "indigo", "purple", "fuchsia", "rose", "peach", "lime", "mint", "cyan", "navy", "brown", "slate", "gold", "plum", "olive",
+] as const;
 export type ObjectiveColor = (typeof OBJECTIVE_COLORS)[number];
 export const isObjectiveColor = (v: unknown): v is ObjectiveColor => typeof v === "string" && (OBJECTIVE_COLORS as readonly string[]).includes(v);
-export const COLOR_LABEL: Record<ObjectiveColor, string> = { blue: "Blue", orange: "Orange", aqua: "Aqua", yellow: "Yellow", magenta: "Pink", green: "Green", violet: "Violet", red: "Red" };
+export const COLOR_LABEL: Record<ObjectiveColor, string> = {
+  blue: "Blue", orange: "Orange", aqua: "Aqua", yellow: "Yellow", magenta: "Pink", green: "Green", violet: "Violet", red: "Red",
+  teal: "Teal", sky: "Sky", indigo: "Indigo", purple: "Purple", fuchsia: "Fuchsia", rose: "Rose", peach: "Peach", lime: "Lime", mint: "Mint", cyan: "Cyan", navy: "Navy", brown: "Brown", slate: "Slate", gold: "Gold", plum: "Plum", olive: "Olive",
+};
+/** The picker's order: round the colour wheel, then the quiet ones. */
+export const COLOR_WHEEL: readonly ObjectiveColor[] = [
+  "red", "rose", "fuchsia", "magenta", "plum", "purple", "violet", "indigo", "navy", "blue", "sky", "cyan", "teal", "aqua", "mint", "green", "lime", "olive", "yellow", "gold", "orange", "peach", "brown", "slate",
+];
 export const colorVar = (c: string, alpha?: number) => `rgb(var(--obj-${isObjectiveColor(c) ? c : "blue"})${alpha === undefined ? "" : ` / ${alpha}`})`;
 export function nextColor(used: string[]): ObjectiveColor {
   return OBJECTIVE_COLORS.find((c) => !used.includes(c)) ?? OBJECTIVE_COLORS[used.length % OBJECTIVE_COLORS.length];

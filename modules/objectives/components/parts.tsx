@@ -50,7 +50,12 @@ export const STATUS_META: Record<Status, { label: string; cls: string }> = {
   missed: { label: "Missed", cls: "text-ink-faint bg-surface-2" },
   off: { label: "Off", cls: "text-ink-faint bg-surface-2" },
   upcoming: { label: "Not started", cls: "text-ink-faint bg-surface-2" },
+  before: { label: "Before this goal", cls: "text-ink-faint bg-surface-2" },
+  nodata: { label: "No numbers", cls: "text-ink-faint bg-surface-2" },
 };
+
+/** A period that isn't judged: from before the goal was set, or without any numbers. */
+export const unjudged = (p: Pick<PeriodView, "status">) => p.status === "before" || p.status === "nodata";
 
 /** Reached / Ahead / On track / Behind / Missed / Off, always with an icon or dot (never colour alone). */
 export function StatusPill({ status, className = "" }: { status: Status; className?: string }) {
@@ -217,24 +222,36 @@ export function HistoryBars({
   }, []);
   if (!periods.length) return null;
   const n = periods.length;
-  const top = Math.max(1, ...periods.map((p) => Math.max(p.value, p.target))) * 1.08;
+  // Periods that aren't judged keep their columns (what happened then) but not their target lines.
+  const top = Math.max(1, ...periods.map((p) => Math.max(p.value, unjudged(p) ? 0 : p.target))) * 1.08;
   const slot = w / n;
   const bw = Math.max(3, Math.min(24, slot * 0.62));
   const H = height;
   const y = (v: number) => H - (Math.max(0, v) / top) * (H - 4);
   const p = hover === null ? null : periods[hover];
+  // Where the goal was set: the first judged column after ones from before it.
+  const setAt = periods.findIndex((x) => x.status !== "before");
   const words = (x: PeriodView) =>
-    `${x.label}: ${formatAmount(metric, x.value)} of ${formatAmount(metric, x.target)}${x.target === 0 ? " (off)" : x.reached ? ", reached" : x.status === "missed" ? ", missed" : ""}`;
+    x.status === "before"
+      ? `${x.label}: ${formatAmount(metric, x.value)} (before this goal)`
+      : x.status === "nodata"
+        ? `${x.label}: no numbers`
+        : `${x.label}: ${formatAmount(metric, x.value)} of ${formatAmount(metric, x.target)}${x.target === 0 ? " (off)" : x.reached ? ", reached" : x.status === "missed" ? ", missed" : ""}`;
   return (
     <div ref={wrap} className={`relative ${className}`}>
       <svg width="100%" height={H} viewBox={`0 0 ${w} ${H}`} role="img" aria-label={periods.map(words).join(". ")} className="block overflow-visible">
         <line x1={0} x2={w} y1={H - 0.5} y2={H - 0.5} stroke="rgb(var(--line) / 0.15)" strokeWidth={1} />
+        {setAt > 0 && (
+          <line x1={slot * setAt + 0.5} x2={slot * setAt + 0.5} y1={2} y2={H - 1} stroke="rgb(var(--ink) / 0.28)" strokeWidth={1} strokeDasharray="3 3">
+            <title>Goal set</title>
+          </line>
+        )}
         {periods.map((x, i) => {
           const cx = slot * i + slot / 2;
           const current = i === n - 1;
           const vy = y(x.value);
           const h = Math.max(x.value > 0 ? 3 : 0, H - vy);
-          const opacity = x.target === 0 ? 0.25 : x.reached ? 1 : current ? 0.6 : 0.32;
+          const opacity = unjudged(x) ? 0.16 : x.target === 0 ? 0.25 : x.reached ? 1 : current ? 0.6 : 0.32;
           const r = Math.min(4, bw / 2, h);
           return (
             <g
@@ -256,7 +273,7 @@ export function HistoryBars({
                   fillOpacity={hover === i ? Math.min(1, opacity + 0.2) : opacity}
                 />
               )}
-              {x.target > 0 && <line x1={cx - bw / 2 - 3} x2={cx + bw / 2 + 3} y1={y(x.target) + 0.5} y2={y(x.target) + 0.5} stroke="rgb(var(--ink) / 0.55)" strokeWidth={1.5} strokeLinecap="round" />}
+              {x.target > 0 && !unjudged(x) && <line x1={cx - bw / 2 - 3} x2={cx + bw / 2 + 3} y1={y(x.target) + 0.5} y2={y(x.target) + 0.5} stroke="rgb(var(--ink) / 0.55)" strokeWidth={1.5} strokeLinecap="round" />}
               {x.reached && bw >= 10 && h >= 14 && (
                 <path d={`M${cx - 3} ${H - h + 7} l2.2 2.2 l4 -4.4`} fill="none" stroke="white" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" />
               )}
@@ -277,9 +294,23 @@ export function HistoryBars({
           className="absolute z-10 -top-2 -translate-y-full -translate-x-1/2 whitespace-nowrap rounded-lg bg-ink text-paper px-2.5 py-1.5 text-[11.5px] shadow-lg pointer-events-none"
           style={{ left: Math.max(70, Math.min(w - 70, slot * (hover as number) + slot / 2)) }}
         >
-          <b className="font-semibold">{formatAmount(metric, p.value)}</b>
-          <span className="opacity-75"> of {formatAmount(metric, p.target)} · {p.label}</span>
-          {p.target === 0 ? <span className="opacity-75"> · off</span> : p.reached ? <span className="text-[#7ee2a8]"> · reached</span> : null}
+          {p.status === "nodata" ? (
+            <>
+              <b className="font-semibold">No numbers</b>
+              <span className="opacity-75"> · {p.label}</span>
+            </>
+          ) : p.status === "before" ? (
+            <>
+              <b className="font-semibold">{formatAmount(metric, p.value)}</b>
+              <span className="opacity-75"> · {p.label} · before this goal</span>
+            </>
+          ) : (
+            <>
+              <b className="font-semibold">{formatAmount(metric, p.value)}</b>
+              <span className="opacity-75"> of {formatAmount(metric, p.target)} · {p.label}</span>
+              {p.target === 0 ? <span className="opacity-75"> · off</span> : p.reached ? <span className="text-[#7ee2a8]"> · reached</span> : null}
+            </>
+          )}
         </div>
       )}
     </div>

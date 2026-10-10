@@ -33,7 +33,10 @@ screenshots. It never touches a real Supabase project.
 #    MOCK_OBJECTIVES=1 eight objectives with 12 weeks of shorts and a year of long videos around the real "now"
 #    (objectives.cjs; extra shorts and long videos appear on the other pages too), MOCK_CHEER=1 their wins of the
 #    last two days not seen yet (the "While you were away" card), MOCK_LAYOUT=objectives the Objectives widget at
-#    MOCK_OBJ_SIZE=6x3 (columns x rows; MOCK_OBJ_SHOW=week one cadence, MOCK_OBJ_IDS=1,2 picked objectives)
+#    MOCK_OBJ_SIZE=6x3 (columns x rows; MOCK_OBJ_SHOW=week one cadence, MOCK_OBJ_IDS=1,2 picked objectives),
+#    MOCK_PROJECTIONS=1 (with MOCK_OBJECTIVES=1) eight projections with a value per day since each was set
+#    (projections.cjs: running, reached, ended, money), MOCK_SWITCHED=1 the Facebook Page replaced 5 days ago
+#    (Analytics says whose numbers it shows)
 node scripts/dev-mock/server.cjs
 
 # 2. the app pointed at it (dummy keys, NEVER the real .env.local; sample exchange rates)

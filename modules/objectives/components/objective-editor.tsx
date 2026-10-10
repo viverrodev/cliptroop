@@ -17,7 +17,7 @@ import {
   LONG_TYPES,
   METRICS,
   METRIC_ORDER,
-  OBJECTIVE_COLORS,
+  COLOR_WHEEL,
   cleanFilters,
   colorVar,
   describe,
@@ -448,7 +448,7 @@ export function ObjectiveEditor({
               </button>
             )}
             <div className="mt-3 flex flex-wrap gap-1.5" role="radiogroup" aria-label="Colour">
-              {OBJECTIVE_COLORS.map((c) => {
+              {COLOR_WHEEL.map((c) => {
                 const on = d.color === c;
                 const taken = usedColors.includes(c) && objective?.color !== c;
                 return (
